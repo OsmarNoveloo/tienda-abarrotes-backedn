@@ -3,13 +3,57 @@ const { getLocalISOString } = require('../utils/dateUtils')
 
 async function getAll(req, res, next) {
   try {
-    const { data, error } = await supabase
-      .from('proveedores')
-      .select('*')
-      .order('nombre')
+    const page = Math.max(1, parseInt(req.query.page ?? '1'))
+    const pageSize = Math.max(1, parseInt(req.query.pageSize ?? '20'))
+    const search = (req.query.search ?? '').trim()
+    const from = (page - 1) * pageSize
+    const to = from + pageSize - 1
 
+    let query = supabase
+      .from('proveedores')
+      .select('*', { count: 'exact' })
+      .order('activo', { ascending: false })
+      .order('nombre')
+      .range(from, to)
+
+    if (search) {
+      query = query.or(`nombre.ilike.%${search}%,telefono.ilike.%${search}%,email.ilike.%${search}%`)
+    }
+
+    const { data, error, count } = await query
     if (error) return next(error)
-    res.json(data ?? [])
+    res.json({ items: data ?? [], total: count ?? 0 })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function getSemana(req, res, next) {
+  try {
+    const { from, to } = req.query
+    const [pagosRes, pedidosRes] = await Promise.all([
+      supabase.from('proveedor_pagos').select('*').gte('fecha', from).lte('fecha', to),
+      supabase.from('proveedor_pedidos').select('*').gte('fecha', from).lte('fecha', to),
+    ])
+    if (pagosRes.error) return next(pagosRes.error)
+    if (pedidosRes.error) return next(pedidosRes.error)
+    res.json({ pagos: pagosRes.data ?? [], pedidos: pedidosRes.data ?? [] })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function updatePedido(req, res, next) {
+  try {
+    const { pedidoId } = req.params
+    const { data, error } = await supabase
+      .from('proveedor_pedidos')
+      .update({ pedido: req.body.pedido })
+      .eq('id', pedidoId)
+      .select()
+      .single()
+    if (error) return next(error)
+    res.json(data)
   } catch (err) {
     next(err)
   }
@@ -126,4 +170,4 @@ async function createPedido(req, res, next) {
   }
 }
 
-module.exports = { getAll, create, update, remove, getPagos, createPago, getPedidos, createPedido }
+module.exports = { getAll, getSemana, create, update, remove, getPagos, createPago, getPedidos, createPedido, updatePedido }

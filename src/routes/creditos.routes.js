@@ -1,10 +1,12 @@
 const { Router } = require('express')
-const { getAll, create, update, getAbonos, createAbono } = require('../controllers/creditos.controller')
+const { getAll, getClientesDeuda, create, update, getAbonos, createAbono, pagarCliente } = require('../controllers/creditos.controller')
 const authMiddleware = require('../middleware/auth')
 
 const router = Router()
 
 router.use(authMiddleware)
+router.get('/deuda-clientes', getClientesDeuda)
+router.post('/pagar-cliente', pagarCliente)
 router.get('/', getAll)
 router.post('/', create)
 router.put('/:id', update)
