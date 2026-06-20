@@ -20,7 +20,8 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => res.
 app.use('/api', routes)
 
 app.use(errorHandler)
-
+console.log('PORT:', process.env.PORT)
+console.log('SUPABASE_URL:', process.env.SUPABASE_URL)
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`)
 })
