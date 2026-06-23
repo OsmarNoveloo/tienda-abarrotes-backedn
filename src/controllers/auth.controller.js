@@ -51,4 +51,35 @@ async function me(req, res) {
   res.json({ user: req.user })
 }
 
-module.exports = { login, me }
+async function recovery(req, res, next) {
+  try {
+    const { usuario, email, newPassword } = req.body
+    if (!usuario || !email || !newPassword) {
+      return res.status(400).json({ error: 'usuario, email y newPassword son requeridos' })
+    }
+    if (newPassword.trim().length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' })
+    }
+
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('id')
+      .eq('usuario', usuario.trim())
+      .eq('email', email.trim())
+      .eq('estado', 'ACTIVO')
+      .maybeSingle()
+
+    if (error) return next(error)
+    if (!data) return res.status(404).json({ error: 'No se encontró un usuario activo con esos datos' })
+
+    const password_hash = sha256Hex(newPassword)
+    const { error: updateErr } = await supabase.from('usuarios').update({ password_hash }).eq('id', data.id)
+    if (updateErr) return next(updateErr)
+
+    res.json({ ok: true })
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = { login, me, recovery }

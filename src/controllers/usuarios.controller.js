@@ -71,4 +71,14 @@ async function remove(req, res, next) {
   }
 }
 
-module.exports = { getAll, create, update, remove }
+async function getRoles(req, res, next) {
+  try {
+    const { data, error } = await supabase.from('roles').select('id,nombre').order('nombre')
+    if (error) return next(error)
+    res.json(data ?? [])
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = { getAll, getRoles, create, update, remove }

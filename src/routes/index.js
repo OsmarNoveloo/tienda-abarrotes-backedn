@@ -15,5 +15,6 @@ router.use('/usuarios', require('./usuarios.routes'))
 router.use('/dashboard', require('./dashboard.routes'))
 router.use('/configuracion', require('./configuracion.routes'))
 router.use('/accesos', require('./accesos.routes'))
+router.use('/notas', require('./notas.routes'))
 
 module.exports = router
