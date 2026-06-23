@@ -91,29 +91,34 @@ async function getById(req, res, next) {
 
 async function create(req, res, next) {
   try {
-    const { detalle, pagos, ...ventaData } = req.body
+    const { detalle, pagos, movimientos, credito, ...ventaData } = req.body
 
     const { data: venta, error: vErr } = await supabase
       .from('ventas')
-      .insert([{ ...ventaData, fecha_venta: getLocalISOString() }])
+      .insert([{ ...ventaData, fecha_venta: ventaData.fecha_venta ?? getLocalISOString() }])
       .select()
       .single()
 
     if (vErr) return next(vErr)
 
-    if (detalle?.length) {
-      const { error: dErr } = await supabase
-        .from('venta_detalle')
-        .insert(detalle.map((d) => ({ ...d, venta_id: venta.id })))
-      if (dErr) return next(dErr)
-    }
-
-    if (pagos?.length) {
-      const { error: pErr } = await supabase
-        .from('venta_pagos')
-        .insert(pagos.map((p) => ({ ...p, venta_id: venta.id, creado_en: getLocalISOString() })))
-      if (pErr) return next(pErr)
-    }
+    await Promise.all([
+      detalle?.length
+        ? supabase.from('venta_detalle').insert(detalle.map((d) => ({ ...d, venta_id: venta.id })))
+            .then(({ error }) => { if (error) console.error('venta_detalle:', error.message) })
+        : Promise.resolve(),
+      pagos?.length
+        ? supabase.from('venta_pagos').insert(pagos.map((p) => ({ ...p, venta_id: venta.id, creado_en: getLocalISOString() })))
+            .then(({ error }) => { if (error) console.error('venta_pagos:', error.message) })
+        : Promise.resolve(),
+      movimientos?.length
+        ? supabase.from('inventario_movimientos').insert(movimientos.map((m) => ({ ...m, referencia_id: venta.id })))
+            .then(({ error }) => { if (error) console.warn('inventario_movimientos:', error.message) })
+        : Promise.resolve(),
+      credito
+        ? supabase.from('creditos_ventas').insert([{ ...credito, venta_id: venta.id }])
+            .then(({ error }) => { if (error) console.warn('creditos_ventas:', error.message) })
+        : Promise.resolve(),
+    ])
 
     res.status(201).json(venta)
   } catch (err) {

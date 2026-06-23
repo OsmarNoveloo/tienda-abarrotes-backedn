@@ -185,4 +185,40 @@ async function recalcularCorte(req, res, next) {
   }
 }
 
-module.exports = { getCajaActual, abrirCaja, cerrarCaja, getCortes, recalcularCorte }
+async function getResumenCaja(req, res, next) {
+  try {
+    const { id } = req.params
+
+    const { data: ventasData, error: ventasErr } = await supabase
+      .from('ventas')
+      .select('id,total,estado')
+      .eq('caja_sesion_id', id)
+
+    if (ventasErr) return next(ventasErr)
+
+    const ventas = ventasData ?? []
+    const ventasPagadas = ventas.filter((v) => v.estado === 'PAGADA')
+    const ventasHoy = ventasPagadas.length
+    const montoHoy = ventasPagadas.reduce((acc, v) => acc + Number(v.total), 0)
+    const montoTotalDia = ventas.reduce((acc, v) => acc + Number(v.total), 0)
+    const ventaIds = ventasPagadas.map((v) => v.id)
+
+    if (ventaIds.length === 0) {
+      return res.json({ ventasHoy, montoHoy, montoTotalDia, unidadesVendidasHoy: 0 })
+    }
+
+    const { data: detalleData, error: detalleErr } = await supabase
+      .from('venta_detalle')
+      .select('cantidad')
+      .in('venta_id', ventaIds)
+
+    if (detalleErr) return next(detalleErr)
+
+    const unidadesVendidasHoy = (detalleData ?? []).reduce((acc, d) => acc + Number(d.cantidad), 0)
+    res.json({ ventasHoy, montoHoy, montoTotalDia, unidadesVendidasHoy })
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = { getCajaActual, abrirCaja, cerrarCaja, getCortes, recalcularCorte, getResumenCaja }

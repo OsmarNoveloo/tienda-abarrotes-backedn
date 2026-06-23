@@ -62,4 +62,42 @@ async function remove(req, res, next) {
   }
 }
 
-module.exports = { getAll, create, update, remove }
+async function getPosClientes(req, res, next) {
+  try {
+    const { data, error } = await supabase
+      .from('clientes')
+      .select('id,nombre')
+      .eq('activo', true)
+      .order('nombre')
+
+    if (error) return next(error)
+
+    const clienteIds = (data ?? []).map((c) => c.id)
+    let saldoMap = new Map()
+
+    if (clienteIds.length > 0) {
+      const { data: saldosData } = await supabase
+        .from('creditos_ventas')
+        .select('cliente_id,saldo_pendiente')
+        .in('cliente_id', clienteIds)
+        .not('estado', 'in', '("PAGADO","CANCELADO")')
+        .gt('saldo_pendiente', 0)
+
+      for (const row of saldosData ?? []) {
+        saldoMap.set(row.cliente_id, (saldoMap.get(row.cliente_id) ?? 0) + Number(row.saldo_pendiente))
+      }
+    }
+
+    const result = (data ?? []).map((c) => ({
+      id: c.id,
+      nombre: c.nombre,
+      saldo_deuda: saldoMap.get(c.id) ?? 0,
+    }))
+
+    res.json(result)
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = { getAll, getPosClientes, create, update, remove }

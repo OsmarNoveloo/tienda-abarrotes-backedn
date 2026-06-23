@@ -3,16 +3,21 @@ const { getLocalISOString } = require('../utils/dateUtils')
 
 async function getAll(req, res, next) {
   try {
+    const { activo } = req.query
     const allProductos = []
     const PAGE_SIZE = 1000
     let from = 0
 
     while (true) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('productos')
         .select('*')
         .order('nombre')
         .range(from, from + PAGE_SIZE - 1)
+
+      if (activo === 'true') query = query.eq('activo', true)
+
+      const { data, error } = await query
 
       if (error) return next(error)
       allProductos.push(...(data ?? []))
