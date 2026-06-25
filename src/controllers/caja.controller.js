@@ -188,11 +188,16 @@ async function recalcularCorte(req, res, next) {
 async function getResumenCaja(req, res, next) {
   try {
     const { id } = req.params
+    const usuarioId = req.query.usuario_id ? parseInt(req.query.usuario_id) : null
 
-    const { data: ventasData, error: ventasErr } = await supabase
+    let ventasQuery = supabase
       .from('ventas')
       .select('id,total,estado')
       .eq('caja_sesion_id', id)
+
+    if (usuarioId) ventasQuery = ventasQuery.eq('usuario_id', usuarioId)
+
+    const { data: ventasData, error: ventasErr } = await ventasQuery
 
     if (ventasErr) return next(ventasErr)
 

@@ -8,6 +8,7 @@ async function getAll(req, res, next) {
     const fechaDesde = req.query.fechaDesde
     const fechaHasta = req.query.fechaHasta
     const search = (req.query.search ?? '').trim().toLowerCase()
+    const usuarioId = req.query.usuario_id ? parseInt(req.query.usuario_id) : null
     const from = (page - 1) * pageSize
     const to = from + pageSize - 1
 
@@ -19,6 +20,7 @@ async function getAll(req, res, next) {
 
     if (fechaDesde) query = query.gte('fecha_venta', `${fechaDesde}T00:00:00`)
     if (fechaHasta) query = query.lte('fecha_venta', `${fechaHasta}T23:59:59`)
+    if (usuarioId) query = query.eq('usuario_id', usuarioId)
 
     if (search) {
       const { data: usuariosMatch } = await supabase
