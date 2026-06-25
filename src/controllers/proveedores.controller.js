@@ -31,8 +31,13 @@ async function getAll(req, res, next) {
 async function getSemana(req, res, next) {
   try {
     const { from, to } = req.query
+    const usuarioId = req.query.usuario_id ? parseInt(req.query.usuario_id) : null
+
+    let pagosQuery = supabase.from('proveedor_pagos').select('*').gte('fecha', from).lte('fecha', to)
+    if (usuarioId) pagosQuery = pagosQuery.eq('usuario_id', usuarioId)
+
     const [pagosRes, pedidosRes] = await Promise.all([
-      supabase.from('proveedor_pagos').select('*').gte('fecha', from).lte('fecha', to),
+      pagosQuery,
       supabase.from('proveedor_pedidos').select('*').gte('fecha', from).lte('fecha', to),
     ])
     if (pagosRes.error) return next(pagosRes.error)
@@ -127,7 +132,7 @@ async function createPago(req, res, next) {
     const { id } = req.params
     const { data, error } = await supabase
       .from('proveedor_pagos')
-      .insert([{ ...req.body, proveedor_id: Number(id), creado_en: getLocalISOString() }])
+      .insert([{ ...req.body, proveedor_id: Number(id), usuario_id: req.user.id, creado_en: getLocalISOString() }])
       .select()
       .single()
 
