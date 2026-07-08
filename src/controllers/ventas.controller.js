@@ -12,32 +12,38 @@ async function getAll(req, res, next) {
     const from = (page - 1) * pageSize
     const to = from + pageSize - 1
 
-    let query = supabase
-      .from('ventas')
-      .select('id,folio,fecha_venta,total,estado,usuario_id,observacion', { count: 'exact' })
-      .order('fecha_venta', { ascending: false })
-      .order('id', { ascending: false })
-
-    if (fechaDesde) query = query.gte('fecha_venta', `${fechaDesde}T00:00:00`)
-    if (fechaHasta) query = query.lte('fecha_venta', `${fechaHasta}T23:59:59`)
-    if (usuarioId) query = query.eq('usuario_id', usuarioId)
-
+    let usuarioIdsForSearch = []
     if (search) {
       const { data: usuariosMatch } = await supabase
         .from('usuarios')
         .select('id')
         .ilike('nombre', `%${search}%`)
         .limit(1000)
-
-      const usuarioIds = (usuariosMatch ?? []).map((u) => u.id)
-      if (usuarioIds.length > 0) {
-        query = query.or(`folio.ilike.%${search}%,usuario_id.in.(${usuarioIds.join(',')})`)
-      } else {
-        query = query.ilike('folio', `%${search}%`)
-      }
+      usuarioIdsForSearch = (usuariosMatch ?? []).map((u) => u.id)
     }
 
-    const { data, error, count } = await query.range(from, to)
+    const applyFilters = (q) => {
+      if (fechaDesde) q = q.gte('fecha_venta', `${fechaDesde}T00:00:00`)
+      if (fechaHasta) q = q.lte('fecha_venta', `${fechaHasta}T23:59:59`)
+      if (usuarioId) q = q.eq('usuario_id', usuarioId)
+      if (search) {
+        if (usuarioIdsForSearch.length > 0) {
+          q = q.or(`folio.ilike.%${search}%,usuario_id.in.(${usuarioIdsForSearch.join(',')})`)
+        } else {
+          q = q.ilike('folio', `%${search}%`)
+        }
+      }
+      return q
+    }
+
+    const listQuery = applyFilters(
+      supabase.from('ventas').select('id,folio,fecha_venta,total,estado,usuario_id,observacion', { count: 'exact' }),
+    )
+      .order('fecha_venta', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to)
+
+    const { data, error, count } = await listQuery
     if (error) return next(error)
 
     const usuarioIds = [...new Set((data ?? []).map((v) => v.usuario_id).filter(Boolean))]
@@ -57,7 +63,24 @@ async function getAll(req, res, next) {
       observacion: row.observacion ?? null,
     }))
 
-    res.json({ items, total: count ?? 0 })
+    // Suma y conteo de pagadas sobre todo el conjunto filtrado, no solo la página actual
+    const totalRows = count ?? 0
+    let sumTotal = 0
+    let totalPagadas = 0
+    const batchSize = 1000
+    for (let start = 0; start < totalRows; start += batchSize) {
+      const end = Math.min(start + batchSize, totalRows) - 1
+      const { data: batch, error: batchErr } = await applyFilters(
+        supabase.from('ventas').select('total,estado'),
+      ).range(start, end)
+      if (batchErr) return next(batchErr)
+      for (const row of batch ?? []) {
+        sumTotal += Number(row.total)
+        if (row.estado === 'PAGADA') totalPagadas++
+      }
+    }
+
+    res.json({ items, total: totalRows, sumTotal, totalPagadas })
   } catch (err) {
     next(err)
   }
