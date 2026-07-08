@@ -16,5 +16,6 @@ router.use('/dashboard', require('./dashboard.routes'))
 router.use('/configuracion', require('./configuracion.routes'))
 router.use('/accesos', require('./accesos.routes'))
 router.use('/notas', require('./notas.routes'))
+router.use('/mercadopago', require('./mercadopago.routes'))
 
 module.exports = router
