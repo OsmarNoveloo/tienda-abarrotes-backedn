@@ -18,7 +18,7 @@ const ventaCreateSchema = z.object({
   detalle: z.array(detalleItemSchema).min(1, 'detalle debe tener al menos un producto'),
   pagos: z.array(pagoItemSchema).optional(),
   movimientos: z.array(z.object({}).passthrough()).optional(),
-  credito: z.object({}).passthrough().optional(),
+  credito: z.object({}).passthrough().nullable().optional(),
 }).passthrough()
 
 module.exports = { ventaCreateSchema }
