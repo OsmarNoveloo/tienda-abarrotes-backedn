@@ -15,7 +15,7 @@ const pagoItemSchema = z.object({
 const ventaCreateSchema = z.object({
   usuario_id: z.coerce.number({ required_error: 'usuario_id es requerido' }),
   total: z.coerce.number({ required_error: 'total es requerido' }),
-  detalle: z.array(detalleItemSchema).min(1, 'detalle debe tener al menos un producto'),
+  detalle: z.array(detalleItemSchema).optional(),
   pagos: z.array(pagoItemSchema).optional(),
   movimientos: z.array(z.object({}).passthrough()).optional(),
   credito: z.object({}).passthrough().nullable().optional(),
