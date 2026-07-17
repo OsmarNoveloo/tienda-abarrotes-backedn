@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase')
 const { sha256Hex } = require('../utils/security')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { registrarActividad } = require('../utils/actividad')
 
 async function getAll(req, res, next) {
   try {
@@ -29,6 +30,14 @@ async function create(req, res, next) {
 
     if (error) return next(error)
     res.status(201).json(data)
+
+    void registrarActividad({
+      usuario_id: req.user?.id,
+      usuario_nombre: req.user?.nombre,
+      accion: 'USUARIO_CREADO',
+      entidad: 'usuarios',
+      detalle: `Creó al usuario "${data.nombre}" (${data.usuario})`,
+    })
   } catch (err) {
     next(err)
   }
@@ -51,6 +60,14 @@ async function update(req, res, next) {
 
     if (error) return next(error)
     res.json(data)
+
+    void registrarActividad({
+      usuario_id: req.user?.id,
+      usuario_nombre: req.user?.nombre,
+      accion: 'USUARIO_ACTUALIZADO',
+      entidad: 'usuarios',
+      detalle: `Actualizó al usuario "${data.nombre}" (${data.usuario})${password ? ' incluyendo su contraseña' : ''}`,
+    })
   } catch (err) {
     next(err)
   }
@@ -59,13 +76,23 @@ async function update(req, res, next) {
 async function remove(req, res, next) {
   try {
     const { id } = req.params
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('usuarios')
       .update({ estado: 'INACTIVO' })
       .eq('id', id)
+      .select('nombre,usuario')
+      .single()
 
     if (error) return next(error)
     res.json({ ok: true })
+
+    void registrarActividad({
+      usuario_id: req.user?.id,
+      usuario_nombre: req.user?.nombre,
+      accion: 'USUARIO_DESACTIVADO',
+      entidad: 'usuarios',
+      detalle: `Desactivó al usuario "${data?.nombre ?? id}" (${data?.usuario ?? ''})`,
+    })
   } catch (err) {
     next(err)
   }

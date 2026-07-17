@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { registrarActividad } = require('../utils/actividad')
 
 async function getAll(req, res, next) {
   try {
@@ -41,6 +42,14 @@ async function create(req, res, next) {
 
     if (error) return next(error)
     res.status(201).json(data)
+
+    void registrarActividad({
+      usuario_id: req.user?.id,
+      usuario_nombre: req.user?.nombre,
+      accion: 'PRODUCTO_CREADO',
+      entidad: 'productos',
+      detalle: `Creó el producto "${data.nombre}"`,
+    })
   } catch (err) {
     next(err)
   }
@@ -58,6 +67,14 @@ async function update(req, res, next) {
 
     if (error) return next(error)
     res.json(data)
+
+    void registrarActividad({
+      usuario_id: req.user?.id,
+      usuario_nombre: req.user?.nombre,
+      accion: 'PRODUCTO_ACTUALIZADO',
+      entidad: 'productos',
+      detalle: `Actualizó el producto "${data.nombre}"`,
+    })
   } catch (err) {
     next(err)
   }
@@ -66,9 +83,20 @@ async function update(req, res, next) {
 async function remove(req, res, next) {
   try {
     const { id } = req.params
+    const { data: existing } = await supabase.from('productos').select('nombre').eq('id', id).maybeSingle()
     const { error } = await supabase.from('productos').delete().eq('id', id)
 
-    if (!error) return res.json({ mode: 'deleted' })
+    if (!error) {
+      res.json({ mode: 'deleted' })
+      void registrarActividad({
+        usuario_id: req.user?.id,
+        usuario_nombre: req.user?.nombre,
+        accion: 'PRODUCTO_ELIMINADO',
+        entidad: 'productos',
+        detalle: `Eliminó el producto "${existing?.nombre ?? id}"`,
+      })
+      return
+    }
 
     const isFkError =
       error.code === '23503' ||
@@ -84,6 +112,14 @@ async function remove(req, res, next) {
 
     if (deactivateError) return next(deactivateError)
     res.json({ mode: 'deactivated' })
+
+    void registrarActividad({
+      usuario_id: req.user?.id,
+      usuario_nombre: req.user?.nombre,
+      accion: 'PRODUCTO_DESACTIVADO',
+      entidad: 'productos',
+      detalle: `Desactivó el producto "${existing?.nombre ?? id}"`,
+    })
   } catch (err) {
     next(err)
   }

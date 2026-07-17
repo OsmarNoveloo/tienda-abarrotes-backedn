@@ -15,6 +15,7 @@ router.use('/usuarios', require('./usuarios.routes'))
 router.use('/dashboard', require('./dashboard.routes'))
 router.use('/configuracion', require('./configuracion.routes'))
 router.use('/accesos', require('./accesos.routes'))
+router.use('/actividad', require('./actividad.routes'))
 router.use('/notas', require('./notas.routes'))
 router.use('/mercadopago', require('./mercadopago.routes'))
 
