@@ -1,5 +1,9 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { getTicketData } = require('../utils/ticket')
+const { buildTicketLines, DEFAULT_WIDTH } = require('../utils/ticketBuilder')
+const { renderEscPos } = require('../utils/ticketEscpos')
+const { renderTicketPdf } = require('../utils/ticketPdf')
 
 async function getAll(req, res, next) {
   try {
@@ -168,4 +172,37 @@ async function cancelar(req, res, next) {
   }
 }
 
-module.exports = { getAll, getById, create, cancelar }
+async function getTicketRaw(req, res, next) {
+  try {
+    const { id } = req.params
+    const ticketData = await getTicketData(id)
+    const lines = buildTicketLines(ticketData, DEFAULT_WIDTH)
+    const buffer = renderEscPos(lines)
+
+    res.json({
+      folio: ticketData.venta.folio ?? ticketData.venta.id,
+      ancho_columnas: DEFAULT_WIDTH,
+      escpos_base64: buffer.toString('base64'),
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function getTicketPdf(req, res, next) {
+  try {
+    const { id } = req.params
+    const ticketData = await getTicketData(id)
+    const lines = buildTicketLines(ticketData, DEFAULT_WIDTH)
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="ticket-${ticketData.venta.folio ?? id}.pdf"`)
+
+    const doc = renderTicketPdf(lines, DEFAULT_WIDTH)
+    doc.pipe(res)
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = { getAll, getById, create, cancelar, getTicketRaw, getTicketPdf }
