@@ -177,7 +177,7 @@ async function getTicketRaw(req, res, next) {
     const { id } = req.params
     const ticketData = await getTicketData(id)
     const lines = buildTicketLines(ticketData, DEFAULT_WIDTH)
-    const buffer = renderEscPos(lines)
+    const buffer = await renderEscPos(lines)
 
     res.json({
       folio: ticketData.venta.folio ?? ticketData.venta.id,

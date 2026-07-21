@@ -9,7 +9,14 @@ async function getTicketData(ventaId) {
       supabase.from('configuracion').select('*').limit(1).maybeSingle(),
     ])
 
-  if (vErr) throw vErr
+  if (vErr) {
+    if (vErr.code === 'PGRST116') {
+      const notFound = new Error('Venta no encontrada')
+      notFound.status = 404
+      throw notFound
+    }
+    throw vErr
+  }
   if (dErr) throw dErr
   if (pErr) throw pErr
 
@@ -35,7 +42,7 @@ async function getTicketData(ventaId) {
     usuarioNombre,
     negocio: {
       nombre: cfg.nombre_negocio ?? cfg.nombre ?? cfg.razon_social ?? 'Tienda el campo',
-      direccion: cfg.direccion ?? null,
+      direccion: cfg.direccion ?? "Calle 21B entre 36 y 38",
       telefono: cfg.telefono ?? null,
       rfc: cfg.rfc ?? null,
       mensajePie: cfg.mensaje_pie ?? cfg.mensaje_ticket ?? cfg.pie_ticket ?? 'Gracias por su compra',

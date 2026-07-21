@@ -1,3 +1,5 @@
+const { logoExists } = require('./ticketImage')
+
 const DEFAULT_WIDTH = 40
 
 function money(n) {
@@ -42,6 +44,10 @@ function buildTicketLines(ticketData, width = DEFAULT_WIDTH) {
   const { venta, items, pagos, usuarioNombre, negocio } = ticketData
   const divider = '-'.repeat(width)
   const lines = []
+
+  if (logoExists()) {
+    lines.push({ type: 'image', align: 'center' })
+  }
 
   lines.push({ text: negocio.nombre, align: 'center', bold: true })
   if (negocio.direccion) lines.push({ text: negocio.direccion, align: 'center' })

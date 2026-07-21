@@ -1,9 +1,12 @@
+const { buildLogoRaster } = require('./ticketImage')
+
 const ESC = 0x1b
 const GS = 0x1d
 
 const ALIGN = { left: 0x00, center: 0x01, right: 0x02 }
+const LOGO_WIDTH_PX = 300 // cabe en impresoras de 58mm (~384 dots) y 80mm (~576 dots)
 
-function renderEscPos(lines) {
+async function renderEscPos(lines) {
   const parts = [Buffer.from([ESC, 0x40])] // init
 
   let currentAlign = null
@@ -15,6 +18,13 @@ function renderEscPos(lines) {
       parts.push(Buffer.from([ESC, 0x61, ALIGN[align]]))
       currentAlign = align
     }
+
+    if (line.type === 'image') {
+      parts.push(await buildLogoRaster(LOGO_WIDTH_PX))
+      parts.push(Buffer.from('\n'))
+      continue
+    }
+
     const bold = !!line.bold
     if (bold !== currentBold) {
       parts.push(Buffer.from([ESC, 0x45, bold ? 1 : 0]))
