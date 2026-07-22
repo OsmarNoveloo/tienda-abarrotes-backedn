@@ -3,9 +3,8 @@ const { getLocalISOString } = require('../utils/dateUtils')
 
 async function getStats(req, res, next) {
   try {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const todayISO = getLocalISOString(today)
+    const hoyMexico = getLocalISOString(new Date()).slice(0, 10)
+    const todayISO = `${hoyMexico}T00:00:00`
 
     const [
       { data: ventasData, error: vErr },
