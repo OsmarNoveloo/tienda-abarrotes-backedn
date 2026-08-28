@@ -148,9 +148,10 @@ const modules = [
   {
     name: 'Mercado Pago', base: '/api/mercadopago',
     endpoints: [
-      { m: 'POST', p: '/pago', d: 'Crea un intento de pago', auth: AUTH },
-      { m: 'GET', p: '/pago/:intentId', d: 'Consulta el estado de un intento de pago', auth: AUTH },
+      { m: 'POST', p: '/pago', d: 'Crea un intento de pago en la terminal', auth: AUTH },
+      { m: 'GET', p: '/pago/:intentId', d: 'Consulta el estado en tiempo real de un intento de pago', auth: AUTH },
       { m: 'DELETE', p: '/pago/:intentId', d: 'Cancela un intento de pago', auth: AUTH },
+      { m: 'GET', p: '/transacciones', d: 'Historial paginado de transacciones de la terminal', auth: AUTH },
     ]
   },
   {
