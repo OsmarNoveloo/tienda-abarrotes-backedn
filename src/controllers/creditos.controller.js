@@ -1,6 +1,43 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
 
+function generateAbonoFolio() {
+  const now = new Date()
+  const pad = (value) => String(value).padStart(2, '0')
+  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
+  return `ABN-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${rand}`
+}
+
+// Registra el abono/liquidación también como venta (PAGADA, sin productos) para que
+// cuente en el total de ventas y el dashboard, ya que es dinero que sí entró a la cuenta.
+// Nunca debe romper la operación principal de abono si algo falla aquí.
+async function registrarVentaPorAbono({ usuario_id, monto, observacion }) {
+  try {
+    const { data: cajaAbierta } = await supabase
+      .from('caja_sesiones')
+      .select('id')
+      .eq('estado', 'ABIERTA')
+      .order('fecha_apertura', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    await supabase.from('ventas').insert([{
+      caja_sesion_id: cajaAbierta?.id ?? null,
+      usuario_id,
+      folio: generateAbonoFolio(),
+      subtotal: monto,
+      descuento: 0,
+      impuesto: 0,
+      total: monto,
+      estado: 'PAGADA',
+      observacion,
+      fecha_venta: getLocalISOString(),
+    }])
+  } catch (err) {
+    console.error('registrarVentaPorAbono:', err.message)
+  }
+}
+
 async function getAll(req, res, next) {
   try {
     const page = Math.max(1, parseInt(req.query.page ?? '1'))
@@ -220,7 +257,7 @@ async function createAbono(req, res, next) {
 
     const { data: credito, error: creditoErr } = await supabase
       .from('creditos_ventas')
-      .select('saldo_pendiente')
+      .select('saldo_pendiente, cliente_id')
       .eq('id', id)
       .single()
 
@@ -241,6 +278,13 @@ async function createAbono(req, res, next) {
       .from('creditos_ventas')
       .update({ saldo_pendiente: nuevoSaldo, estado: nuevoEstado })
       .eq('id', id)
+
+    const { data: cliente } = await supabase.from('clientes').select('nombre').eq('id', credito.cliente_id).maybeSingle()
+    void registrarVentaPorAbono({
+      usuario_id: rest.usuario_id,
+      monto: montoNum,
+      observacion: `${nuevoEstado === 'PAGADO' ? 'Liquidación' : 'Abono'} de crédito — ${cliente?.nombre ?? 'Cliente'}${rest.observacion ? ` | ${rest.observacion}` : ''}`,
+    })
 
     res.status(201).json(data)
   } catch (err) {
@@ -293,6 +337,16 @@ async function pagarCliente(req, res, next) {
         .from('creditos_ventas')
         .update({ saldo_pendiente: upd.saldo, estado: upd.estado })
         .eq('id', upd.id)
+    }
+
+    const montoAplicado = Number((montoFinal - remaining).toFixed(2))
+    if (montoAplicado > 0) {
+      const { data: cliente } = await supabase.from('clientes').select('nombre').eq('id', cliente_id).maybeSingle()
+      void registrarVentaPorAbono({
+        usuario_id,
+        monto: montoAplicado,
+        observacion: `Pago de crédito — ${cliente?.nombre ?? 'Cliente'} (${abonosToInsert.length} crédito${abonosToInsert.length === 1 ? '' : 's'})${observacion ? ` | ${observacion}` : ''}`,
+      })
     }
 
     res.json({ ok: true, abonos: abonosToInsert.length })

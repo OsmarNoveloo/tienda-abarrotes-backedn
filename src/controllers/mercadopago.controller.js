@@ -51,7 +51,9 @@ async function aplicarPagoSiCorresponde(order) {
     if (order.status !== 'processed' || !payment?.id) return
 
     const ventaId = order.external_reference
-    if (!ventaId) return
+    // Solo se auto-aplica cuando la referencia es un id de venta real (numérico);
+    // otros cobros con terminal (ej. abonos a crédito) se aplican desde su propio flujo.
+    if (!ventaId || !/^\d+$/.test(String(ventaId))) return
 
     const { data: pagoExistente } = await supabase
       .from('venta_pagos')
@@ -82,15 +84,19 @@ async function aplicarPagoSiCorresponde(order) {
 
 async function crearIntento(req, res, next) {
   try {
-    const { venta_id, monto, descripcion } = req.body
+    const { venta_id, monto, descripcion, referencia } = req.body
 
-    if (!venta_id || !monto) {
-      return res.status(400).json({ error: 'venta_id y monto son requeridos' })
+    if (!monto) {
+      return res.status(400).json({ error: 'monto es requerido' })
     }
+
+    const externalReference = venta_id
+      ? String(venta_id)
+      : (referencia ? String(referencia).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) : `pago-${Date.now()}`)
 
     const body = {
       type: 'point',
-      external_reference: String(venta_id),
+      external_reference: externalReference,
       description: descripcion ?? 'Compra tienda abarrotes',
       expiration_time: 'PT10M',
       transactions: {
@@ -122,7 +128,7 @@ async function crearIntento(req, res, next) {
 
     await registrarTransaccion({
       intentId: data.id,
-      ventaId: Number(venta_id),
+      ventaId: venta_id ? Number(venta_id) : null,
       monto: Number(monto),
       estado: data.status ?? 'created',
       detalle: data,
