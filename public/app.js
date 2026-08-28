@@ -43,6 +43,8 @@ const modules = [
     endpoints: [
       { m: 'GET', p: '/', d: 'Lista las ventas', auth: AUTH },
       { m: 'GET', p: '/:id', d: 'Detalle de una venta', auth: AUTH },
+      { m: 'GET', p: '/:id/ticket-pdf', d: 'Genera el ticket de la venta en PDF', auth: AUTH },
+      { m: 'GET', p: '/:id/ticket-raw', d: 'Genera el ticket de la venta en formato ESC/POS crudo', auth: AUTH },
       { m: 'POST', p: '/', d: 'Registra una venta', auth: AUTH },
       { m: 'PATCH', p: '/:id/cancelar', d: 'Cancela una venta', auth: AUTH },
     ]
@@ -104,6 +106,12 @@ const modules = [
       { m: 'POST', p: '/', d: 'Crea un usuario', auth: AUTH },
       { m: 'PUT', p: '/:id', d: 'Actualiza un usuario', auth: AUTH },
       { m: 'DELETE', p: '/:id', d: 'Elimina un usuario', auth: AUTH },
+    ]
+  },
+  {
+    name: 'Actividad', base: '/api/actividad',
+    endpoints: [
+      { m: 'GET', p: '/', d: 'Lista el registro de actividad paginado', auth: AUTH },
     ]
   },
   {
