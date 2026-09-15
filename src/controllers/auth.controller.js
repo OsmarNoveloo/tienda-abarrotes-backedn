@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken')
 const supabase = require('../config/supabase')
 const { sha256Hex } = require('../utils/security')
+const { dbError } = require('../utils/httpErrors')
 
 async function login(req, res, next) {
   try {
@@ -16,7 +17,7 @@ async function login(req, res, next) {
       .eq('estado', 'ACTIVO')
       .maybeSingle()
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar el usuario', error))
     if (!data) return res.status(401).json({ error: 'Usuario o contraseña incorrectos' })
 
     const hash = sha256Hex(password)
@@ -69,12 +70,12 @@ async function recovery(req, res, next) {
       .eq('estado', 'ACTIVO')
       .maybeSingle()
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar el usuario', error))
     if (!data) return res.status(404).json({ error: 'No se encontró un usuario activo con esos datos' })
 
     const password_hash = sha256Hex(newPassword)
     const { error: updateErr } = await supabase.from('usuarios').update({ password_hash }).eq('id', data.id)
-    if (updateErr) return next(updateErr)
+    if (updateErr) return next(dbError('actualizar la contraseña', updateErr))
 
     res.json({ ok: true })
   } catch (err) {

@@ -5,6 +5,7 @@ const { getTicketData } = require('../utils/ticket')
 const { buildTicketLines, DEFAULT_WIDTH } = require('../utils/ticketBuilder')
 const { renderEscPos } = require('../utils/ticketEscpos')
 const { renderTicketPdf } = require('../utils/ticketPdf')
+const { dbError } = require('../utils/httpErrors')
 
 async function getAll(req, res, next) {
   try {
@@ -49,7 +50,7 @@ async function getAll(req, res, next) {
       .range(from, to)
 
     const { data, error, count } = await listQuery
-    if (error) return next(error)
+    if (error) return next(dbError('consultar ventas', error))
 
     const usuarioIds = [...new Set((data ?? []).map((v) => v.usuario_id).filter(Boolean))]
     let usuarioMap = new Map()
@@ -79,7 +80,7 @@ async function getAll(req, res, next) {
       const { data: batch, error: batchErr } = await applyFilters(
         supabase.from('ventas').select('id,total,estado'),
       ).range(start, end)
-      if (batchErr) return next(batchErr)
+      if (batchErr) return next(dbError('calcular los totales de ventas', batchErr))
       for (const row of batch ?? []) {
         sumTotal += Number(row.total)
         if (row.estado === 'PAGADA') totalPagadas++
@@ -124,9 +125,9 @@ async function getById(req, res, next) {
         supabase.from('venta_pagos').select('*').eq('venta_id', id),
       ])
 
-    if (vErr) return next(vErr)
-    if (dErr) return next(dErr)
-    if (pErr) return next(pErr)
+    if (vErr) return next(dbError('consultar la venta', vErr))
+    if (dErr) return next(dbError('consultar el detalle de la venta', dErr))
+    if (pErr) return next(dbError('consultar los pagos de la venta', pErr))
 
     const mappedDetalle = (detalle ?? []).map((d) => ({
       cantidad: d.cantidad,
@@ -152,7 +153,7 @@ async function create(req, res, next) {
       .select()
       .single()
 
-    if (vErr) return next(vErr)
+    if (vErr) return next(dbError('registrar la venta', vErr))
 
     await Promise.all([
       detalle?.length
@@ -189,7 +190,7 @@ async function cancelar(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('cancelar la venta', error))
     res.json(data)
   } catch (err) {
     next(err)

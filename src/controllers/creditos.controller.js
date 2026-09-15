@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
 const { getMetodoPagoTarjetaId } = require('../utils/metodosPago')
+const { dbError } = require('../utils/httpErrors')
 
 function generateAbonoFolio() {
   const now = new Date()
@@ -99,7 +100,7 @@ async function getAll(req, res, next) {
       .order('id', { ascending: false })
       .range(from, to)
 
-    if (creditosErr) return next(creditosErr)
+    if (creditosErr) return next(dbError('consultar créditos', creditosErr))
     if (!rows?.length) return res.json({ items: [], total: count ?? 0 })
 
     const clienteIds = [...new Set(rows.map((r) => r.cliente_id).filter(Boolean))]
@@ -176,7 +177,7 @@ async function getClientesDeuda(req, res, next) {
       .not('estado', 'in', '("PAGADO","CANCELADO")')
       .gt('saldo_pendiente', 0)
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar la deuda por cliente', error))
 
     const byCliente = new Map()
     for (const row of data ?? []) {
@@ -192,7 +193,7 @@ async function getClientesDeuda(req, res, next) {
       .select('id,nombre,telefono')
       .in('id', clienteIds)
 
-    if (clientesErr) return next(clientesErr)
+    if (clientesErr) return next(dbError('consultar clientes con deuda', clientesErr))
 
     const clienteMap = new Map((clientesData ?? []).map((c) => [c.id, c]))
 
@@ -224,7 +225,7 @@ async function create(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('crear el crédito', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)
@@ -241,7 +242,7 @@ async function update(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar el crédito', error))
     res.json(data)
   } catch (err) {
     next(err)
@@ -257,7 +258,7 @@ async function getAbonos(req, res, next) {
       .eq('credito_id', id)
       .order('fecha_abono', { ascending: false })
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar los abonos del crédito', error))
     res.json(data ?? [])
   } catch (err) {
     next(err)
@@ -276,7 +277,7 @@ async function createAbono(req, res, next) {
       .eq('id', id)
       .single()
 
-    if (creditoErr) return next(creditoErr)
+    if (creditoErr) return next(dbError('consultar el crédito', creditoErr))
 
     const nuevoSaldo = Number(Math.max(Number(credito.saldo_pendiente) - montoNum, 0).toFixed(2))
     const nuevoEstado = nuevoSaldo <= 0 ? 'PAGADO' : 'ABONANDO'
@@ -289,7 +290,7 @@ async function createAbono(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('registrar el abono', error))
 
     await supabase
       .from('creditos_ventas')
@@ -323,7 +324,7 @@ async function pagarCliente(req, res, next) {
       .gt('saldo_pendiente', 0)
       .order('fecha_credito', { ascending: true })
 
-    if (fetchErr) return next(fetchErr)
+    if (fetchErr) return next(dbError('consultar créditos del cliente', fetchErr))
 
     const metodoPagoId = es_tarjeta ? await getMetodoPagoTarjetaId() : null
 
@@ -350,7 +351,7 @@ async function pagarCliente(req, res, next) {
     }
 
     const { error: abonoErr } = await supabase.from('abonos_credito').insert(abonosToInsert)
-    if (abonoErr) return next(abonoErr)
+    if (abonoErr) return next(dbError('registrar los abonos', abonoErr))
 
     for (const upd of creditosToUpdate) {
       await supabase

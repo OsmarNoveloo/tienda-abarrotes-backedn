@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { dbError } = require('../utils/httpErrors')
 
 async function getStats(req, res, next) {
   try {
@@ -16,9 +17,9 @@ async function getStats(req, res, next) {
       supabase.from('vista_stock_actual').select('*', { count: 'exact', head: true }).eq('stock_bajo', true),
     ])
 
-    if (vErr) return next(vErr)
-    if (pErr) return next(pErr)
-    if (sErr) return next(sErr)
+    if (vErr) return next(dbError('consultar las ventas del día', vErr))
+    if (pErr) return next(dbError('consultar productos activos', pErr))
+    if (sErr) return next(dbError('consultar productos con stock bajo', sErr))
 
     const ventasHoy = (ventasData ?? []).length
     const ingresoHoy = (ventasData ?? []).reduce((acc, v) => acc + Number(v.total), 0)
@@ -39,7 +40,7 @@ async function getUltimasVentas(req, res, next) {
       .order('id', { ascending: false })
       .limit(limit)
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar las últimas ventas', error))
 
     const usuarioIds = [...new Set((data ?? []).map((v) => v.usuario_id).filter(Boolean))]
     const ventaIds = (data ?? []).map((v) => v.id)

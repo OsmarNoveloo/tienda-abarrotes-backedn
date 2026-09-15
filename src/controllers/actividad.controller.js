@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase')
+const { dbError } = require('../utils/httpErrors')
 
 async function getActividad(req, res, next) {
   try {
@@ -13,7 +14,7 @@ async function getActividad(req, res, next) {
       .order('creado_en', { ascending: false })
       .range(from, to)
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar el registro de actividad', error))
     res.json({ items: data ?? [], total: count ?? 0 })
   } catch (err) {
     next(err)

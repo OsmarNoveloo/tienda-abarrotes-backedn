@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { dbError } = require('../utils/httpErrors')
 
 async function getCajaActual(req, res, next) {
   try {
@@ -11,7 +12,7 @@ async function getCajaActual(req, res, next) {
       .limit(1)
       .maybeSingle()
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar la caja actual', error))
     if (!data) return res.json(null)
 
     const { data: usuario } = await supabase
@@ -40,7 +41,7 @@ async function abrirCaja(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('abrir la caja', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)
@@ -58,7 +59,7 @@ async function cerrarCaja(req, res, next) {
       .eq('id', id)
       .single()
 
-    if (cajaErr) return next(cajaErr)
+    if (cajaErr) return next(dbError('consultar la sesión de caja', cajaErr))
 
     const montoApertura = Number(caja.monto_apertura)
     const totalEfectivo = Number(total_efectivo)
@@ -81,7 +82,7 @@ async function cerrarCaja(req, res, next) {
       observacion: observaciones ?? null,
     }])
 
-    if (corteErr) return next(corteErr)
+    if (corteErr) return next(dbError('registrar el corte de caja', corteErr))
 
     const { data, error: updateErr } = await supabase
       .from('caja_sesiones')
@@ -94,7 +95,7 @@ async function cerrarCaja(req, res, next) {
       .select()
       .single()
 
-    if (updateErr) return next(updateErr)
+    if (updateErr) return next(dbError('cerrar la caja', updateErr))
     res.json(data)
   } catch (err) {
     next(err)
@@ -110,7 +111,7 @@ async function getCortes(req, res, next) {
       .order('id', { ascending: false })
       .limit(limit)
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar los cortes de caja', error))
     if (!data?.length) return res.json([])
 
     const usuarioIds = [...new Set(data.map((c) => c.usuario_id))]
@@ -142,7 +143,7 @@ async function recalcularCorte(req, res, next) {
       .eq('estado', 'PAGADA')
       .eq('caja_sesion_id', caja_sesion_id)
 
-    if (ventasErr) return next(ventasErr)
+    if (ventasErr) return next(dbError('consultar las ventas de la caja', ventasErr))
 
     const ventaIds = (ventasData ?? []).map((v) => v.id)
     const totalVentas = (ventasData ?? []).reduce((acc, v) => acc + Number(v.total), 0)
@@ -178,7 +179,7 @@ async function recalcularCorte(req, res, next) {
       .select()
       .single()
 
-    if (updateErr) return next(updateErr)
+    if (updateErr) return next(dbError('recalcular el corte de caja', updateErr))
     res.json(data)
   } catch (err) {
     next(err)
@@ -199,7 +200,7 @@ async function getResumenCaja(req, res, next) {
 
     const { data: ventasData, error: ventasErr } = await ventasQuery
 
-    if (ventasErr) return next(ventasErr)
+    if (ventasErr) return next(dbError('consultar el resumen de caja', ventasErr))
 
     const ventas = ventasData ?? []
     const ventasPagadas = ventas.filter((v) => v.estado === 'PAGADA')
@@ -217,7 +218,7 @@ async function getResumenCaja(req, res, next) {
       .select('cantidad')
       .in('venta_id', ventaIds)
 
-    if (detalleErr) return next(detalleErr)
+    if (detalleErr) return next(dbError('consultar las unidades vendidas', detalleErr))
 
     const unidadesVendidasHoy = (detalleData ?? []).reduce((acc, d) => acc + Number(d.cantidad), 0)
     res.json({ ventasHoy, montoHoy, montoTotalDia, unidadesVendidasHoy })

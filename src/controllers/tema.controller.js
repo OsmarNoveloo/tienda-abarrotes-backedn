@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase')
+const { dbError } = require('../utils/httpErrors')
 
 const TABLA = 'configuracion_tema'
 
@@ -11,7 +12,7 @@ async function getTema(req, res, next) {
       .eq('usuario_id', userId)
       .maybeSingle()
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar el tema', error))
     res.json(data ?? null)
   } catch (err) {
     next(err)
@@ -28,7 +29,7 @@ async function upsertTema(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar el tema', error))
     res.json(data)
   } catch (err) {
     next(err)

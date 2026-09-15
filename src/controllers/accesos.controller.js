@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
 const { registrarActividad } = require('../utils/actividad')
+const { dbError } = require('../utils/httpErrors')
 
 async function getAccesos(req, res, next) {
   try {
@@ -10,7 +11,7 @@ async function getAccesos(req, res, next) {
       .eq('id', 1)
       .maybeSingle()
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar los accesos', error))
     res.json(data ?? null)
   } catch (err) {
     next(err)
@@ -33,7 +34,7 @@ async function updateAccesos(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar los accesos', error))
     res.json(data)
 
     void registrarActividad({

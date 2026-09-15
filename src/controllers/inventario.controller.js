@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { dbError } = require('../utils/httpErrors')
 
 async function getMovimientos(req, res, next) {
   try {
@@ -15,7 +16,7 @@ async function getMovimientos(req, res, next) {
       .order('fecha_movimiento', { ascending: false })
       .limit(limit)
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar los movimientos de inventario', error))
 
     const mapped = (data ?? []).map((row) => ({
       id: row.id,
@@ -46,7 +47,7 @@ async function createMovimiento(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('registrar el movimiento de inventario', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)
@@ -60,7 +61,7 @@ async function getStockActual(req, res, next) {
       .select('*')
       .order('producto_nombre')
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar el stock actual', error))
     res.json(data ?? [])
   } catch (err) {
     next(err)
@@ -86,7 +87,7 @@ async function getStockPage(req, res, next) {
     }
 
     const { data, error, count } = await query
-    if (error) return next(error)
+    if (error) return next(dbError('consultar el stock', error))
     res.json({ items: data ?? [], total: count ?? 0 })
   } catch (err) {
     next(err)
@@ -100,7 +101,7 @@ async function getStockBajoCount(req, res, next) {
       .select('*', { count: 'exact', head: true })
       .eq('stock_bajo', true)
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar el stock bajo', error))
     res.json({ count: count ?? 0 })
   } catch (err) {
     next(err)

@@ -2,6 +2,7 @@ const supabase = require('../config/supabase')
 const { sha256Hex } = require('../utils/security')
 const { getLocalISOString } = require('../utils/dateUtils')
 const { registrarActividad } = require('../utils/actividad')
+const { dbError } = require('../utils/httpErrors')
 
 async function getAll(req, res, next) {
   try {
@@ -10,7 +11,7 @@ async function getAll(req, res, next) {
       .select('id,rol_id,nombre,usuario,telefono,email,estado,creado_en,roles(nombre)')
       .order('nombre')
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar usuarios', error))
     res.json(data ?? [])
   } catch (err) {
     next(err)
@@ -28,7 +29,7 @@ async function create(req, res, next) {
       .select('id,rol_id,nombre,usuario,telefono,email,estado,creado_en')
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('crear el usuario', error))
     res.status(201).json(data)
 
     void registrarActividad({
@@ -58,7 +59,7 @@ async function update(req, res, next) {
       .select('id,rol_id,nombre,usuario,telefono,email,estado,creado_en')
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar el usuario', error))
     res.json(data)
 
     void registrarActividad({
@@ -83,7 +84,7 @@ async function remove(req, res, next) {
       .select('nombre,usuario')
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('desactivar el usuario', error))
     res.json({ ok: true })
 
     void registrarActividad({
@@ -101,7 +102,7 @@ async function remove(req, res, next) {
 async function getRoles(req, res, next) {
   try {
     const { data, error } = await supabase.from('roles').select('id,nombre').order('nombre')
-    if (error) return next(error)
+    if (error) return next(dbError('consultar los roles', error))
     res.json(data ?? [])
   } catch (err) {
     next(err)

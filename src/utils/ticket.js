@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase')
+const { dbError, notFound } = require('./httpErrors')
 
 async function getTicketData(ventaId) {
   const [{ data: venta, error: vErr }, { data: detalle, error: dErr }, { data: pagos, error: pErr }, { data: config }] =
@@ -10,15 +11,11 @@ async function getTicketData(ventaId) {
     ])
 
   if (vErr) {
-    if (vErr.code === 'PGRST116') {
-      const notFound = new Error('Venta no encontrada')
-      notFound.status = 404
-      throw notFound
-    }
-    throw vErr
+    if (vErr.code === 'PGRST116') throw notFound('Venta')
+    throw dbError('consultar la venta para el ticket', vErr)
   }
-  if (dErr) throw dErr
-  if (pErr) throw pErr
+  if (dErr) throw dbError('consultar el detalle del ticket', dErr)
+  if (pErr) throw dbError('consultar los pagos del ticket', pErr)
 
   let usuarioNombre = null
   if (venta?.usuario_id) {

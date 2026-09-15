@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
 const { registrarActividad } = require('../utils/actividad')
+const { dbError } = require('../utils/httpErrors')
 
 async function getAll(req, res, next) {
   try {
@@ -20,7 +21,7 @@ async function getAll(req, res, next) {
 
       const { data, error } = await query
 
-      if (error) return next(error)
+      if (error) return next(dbError('consultar productos', error))
       allProductos.push(...(data ?? []))
       if ((data ?? []).length < PAGE_SIZE) break
       from += PAGE_SIZE
@@ -40,7 +41,7 @@ async function create(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('crear el producto', error))
     res.status(201).json(data)
 
     void registrarActividad({
@@ -65,7 +66,7 @@ async function update(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar el producto', error))
     res.json(data)
 
     void registrarActividad({
@@ -103,14 +104,14 @@ async function remove(req, res, next) {
       error.message.includes('inventario_movimientos_producto_id_fkey') ||
       error.message.includes('venta_detalle_producto_id_fkey')
 
-    if (!isFkError) return next(error)
+    if (!isFkError) return next(dbError('eliminar el producto', error))
 
     const { error: deactivateError } = await supabase
       .from('productos')
       .update({ activo: false, actualizado_en: getLocalISOString() })
       .eq('id', id)
 
-    if (deactivateError) return next(deactivateError)
+    if (deactivateError) return next(dbError('desactivar el producto', deactivateError))
     res.json({ mode: 'deactivated' })
 
     void registrarActividad({

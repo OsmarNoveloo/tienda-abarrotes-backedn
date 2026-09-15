@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase')
+const { dbError } = require('../utils/httpErrors')
 
 async function getConfig(req, res, next) {
   try {
@@ -8,7 +9,7 @@ async function getConfig(req, res, next) {
       .limit(1)
       .maybeSingle()
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar la configuración', error))
     res.json(data ?? {})
   } catch (err) {
     next(err)
@@ -23,7 +24,7 @@ async function updateConfig(req, res, next) {
       ? await supabase.from('configuracion').update(values).eq('id', id).select().single()
       : await supabase.from('configuracion').insert([values]).select().single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar la configuración', error))
     res.json(data)
   } catch (err) {
     next(err)

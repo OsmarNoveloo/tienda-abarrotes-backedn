@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase')
+const { dbError } = require('../utils/httpErrors')
 
 async function getNota(req, res, next) {
   try {
@@ -10,7 +11,7 @@ async function getNota(req, res, next) {
       .limit(1)
       .maybeSingle()
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar la nota', error))
     res.json(data ?? null)
   } catch (err) {
     next(err)
@@ -26,7 +27,7 @@ async function createNota(req, res, next) {
       .select('id,contenido')
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('crear la nota', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)
@@ -44,7 +45,7 @@ async function updateNota(req, res, next) {
       .select('id,contenido')
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar la nota', error))
     res.json(data)
   } catch (err) {
     next(err)

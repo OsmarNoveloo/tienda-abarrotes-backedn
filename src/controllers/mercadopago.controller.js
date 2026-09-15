@@ -2,6 +2,7 @@ const crypto = require('crypto')
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
 const { getMetodoPagoTarjetaId } = require('../utils/metodosPago')
+const { dbError, externalError } = require('../utils/httpErrors')
 
 const MP_API = 'https://api.mercadopago.com'
 
@@ -143,7 +144,7 @@ async function crearIntento(req, res, next) {
 
     res.status(201).json(data)
   } catch (err) {
-    next(err)
+    next(externalError('Mercado Pago', err))
   }
 }
 
@@ -170,7 +171,7 @@ async function consultarIntento(req, res, next) {
 
     res.json(data)
   } catch (err) {
-    next(err)
+    next(externalError('Mercado Pago', err))
   }
 }
 
@@ -193,7 +194,7 @@ async function cancelarIntento(req, res, next) {
 
     res.json({ ok: true, message: 'Intento cancelado', data })
   } catch (err) {
-    next(err)
+    next(externalError('Mercado Pago', err))
   }
 }
 
@@ -216,7 +217,7 @@ async function getTransacciones(req, res, next) {
     if (ventaId) query = query.eq('venta_id', ventaId)
 
     const { data, error, count } = await query
-    if (error) return next(error)
+    if (error) return next(dbError('consultar las transacciones de terminal', error))
 
     res.json({ items: data ?? [], total: count ?? 0 })
   } catch (err) {

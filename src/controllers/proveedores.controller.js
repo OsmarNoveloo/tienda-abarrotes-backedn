@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { dbError } = require('../utils/httpErrors')
 
 async function getAll(req, res, next) {
   try {
@@ -21,7 +22,7 @@ async function getAll(req, res, next) {
     }
 
     const { data, error, count } = await query
-    if (error) return next(error)
+    if (error) return next(dbError('consultar proveedores', error))
     res.json({ items: data ?? [], total: count ?? 0 })
   } catch (err) {
     next(err)
@@ -40,8 +41,8 @@ async function getSemana(req, res, next) {
       pagosQuery,
       supabase.from('proveedor_pedidos').select('*').gte('fecha', from).lte('fecha', to),
     ])
-    if (pagosRes.error) return next(pagosRes.error)
-    if (pedidosRes.error) return next(pedidosRes.error)
+    if (pagosRes.error) return next(dbError('consultar los pagos de la semana', pagosRes.error))
+    if (pedidosRes.error) return next(dbError('consultar los pedidos de la semana', pedidosRes.error))
     res.json({ pagos: pagosRes.data ?? [], pedidos: pedidosRes.data ?? [] })
   } catch (err) {
     next(err)
@@ -57,7 +58,7 @@ async function updatePedido(req, res, next) {
       .eq('id', pedidoId)
       .select()
       .single()
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar el pedido', error))
     res.json(data)
   } catch (err) {
     next(err)
@@ -72,7 +73,7 @@ async function create(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('crear el proveedor', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)
@@ -89,7 +90,7 @@ async function update(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar el proveedor', error))
     res.json(data)
   } catch (err) {
     next(err)
@@ -104,7 +105,7 @@ async function remove(req, res, next) {
       .update({ activo: false })
       .eq('id', id)
 
-    if (error) return next(error)
+    if (error) return next(dbError('eliminar el proveedor', error))
     res.json({ ok: true })
   } catch (err) {
     next(err)
@@ -120,7 +121,7 @@ async function getPagos(req, res, next) {
       .eq('proveedor_id', id)
       .order('fecha', { ascending: false })
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar los pagos del proveedor', error))
     res.json(data ?? [])
   } catch (err) {
     next(err)
@@ -136,7 +137,7 @@ async function createPago(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('registrar el pago al proveedor', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)
@@ -152,7 +153,7 @@ async function getPedidos(req, res, next) {
       .eq('proveedor_id', id)
       .order('fecha', { ascending: false })
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar los pedidos del proveedor', error))
     res.json(data ?? [])
   } catch (err) {
     next(err)
@@ -168,7 +169,7 @@ async function createPedido(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('registrar el pedido', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)

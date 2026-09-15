@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { dbError } = require('../utils/httpErrors')
 
 async function getAll(req, res, next) {
   try {
@@ -13,7 +14,7 @@ async function getAll(req, res, next) {
     if (search) query = query.or(`nombre.ilike.%${search}%,telefono.ilike.%${search}%`)
 
     const { data, error, count } = await query
-    if (error) return next(error)
+    if (error) return next(dbError('consultar clientes', error))
 
     const pageClientes = data ?? []
     const clienteIds = pageClientes.map((c) => c.id)
@@ -46,7 +47,7 @@ async function create(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('crear el cliente', error))
     res.status(201).json(data)
   } catch (err) {
     next(err)
@@ -63,7 +64,7 @@ async function update(req, res, next) {
       .select()
       .single()
 
-    if (error) return next(error)
+    if (error) return next(dbError('actualizar el cliente', error))
     res.json(data)
   } catch (err) {
     next(err)
@@ -78,7 +79,7 @@ async function remove(req, res, next) {
       .update({ activo: false })
       .eq('id', id)
 
-    if (error) return next(error)
+    if (error) return next(dbError('eliminar el cliente', error))
     res.json({ ok: true })
   } catch (err) {
     next(err)
@@ -96,7 +97,7 @@ async function getDeudas(req, res, next) {
       .neq('estado', 'PAGADO')
       .order('fecha_credito', { ascending: false })
 
-    if (credErr) return next(credErr)
+    if (credErr) return next(dbError('consultar las deudas del cliente', credErr))
     if (!creditos?.length) return res.json([])
 
     const ventaIds = [...new Set(creditos.map((c) => c.venta_id).filter(Boolean))]
@@ -139,7 +140,7 @@ async function getPosClientes(req, res, next) {
       .eq('activo', true)
       .order('nombre')
 
-    if (error) return next(error)
+    if (error) return next(dbError('consultar clientes', error))
 
     const clienteIds = (data ?? []).map((c) => c.id)
     let saldoMap = new Map()
