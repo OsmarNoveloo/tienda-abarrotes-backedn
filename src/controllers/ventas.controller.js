@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { getMetodoPagoTarjetaId } = require('../utils/metodosPago')
 const { getTicketData } = require('../utils/ticket')
 const { buildTicketLines, DEFAULT_WIDTH } = require('../utils/ticketBuilder')
 const { renderEscPos } = require('../utils/ticketEscpos')
@@ -87,15 +88,24 @@ async function getAll(req, res, next) {
     }
 
     let sumTarjeta = 0
-    for (let start = 0; start < ventaIds.length; start += batchSize) {
-      const idsBatch = ventaIds.slice(start, start + batchSize)
-      const { data: pagosBatch, error: pagosErr } = await supabase
-        .from('venta_pagos')
-        .select('monto')
-        .eq('metodo', 'TARJETA')
-        .in('venta_id', idsBatch)
-      if (pagosErr) return next(pagosErr)
-      for (const row of pagosBatch ?? []) sumTarjeta += Number(row.monto)
+    try {
+      const metodoPagoTarjetaId = await getMetodoPagoTarjetaId()
+      if (metodoPagoTarjetaId && ventaIds.length > 0) {
+        for (let start = 0; start < ventaIds.length; start += batchSize) {
+          const idsBatch = ventaIds.slice(start, start + batchSize)
+          const { data: pagosBatch, error: pagosErr } = await supabase
+            .from('venta_pagos')
+            .select('monto')
+            .eq('metodo_pago_id', metodoPagoTarjetaId)
+            .in('venta_id', idsBatch)
+          if (pagosErr) throw pagosErr
+          for (const row of pagosBatch ?? []) sumTarjeta += Number(row.monto)
+        }
+      }
+    } catch (err) {
+      // No dejar caer todo /ventas si venta_pagos falla
+      console.error('venta_pagos (tarjeta):', err.message)
+      sumTarjeta = 0
     }
 
     res.json({ items, total: totalRows, sumTotal, totalPagadas, sumTarjeta })

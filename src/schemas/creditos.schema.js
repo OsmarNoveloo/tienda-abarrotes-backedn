@@ -17,6 +17,7 @@ const abonoCreateSchema = z.object({
   usuario_id: z.coerce.number().optional().nullable(),
   metodo_pago_id: z.coerce.number().optional().nullable(),
   observacion: z.string().optional().nullable(),
+  es_tarjeta: z.boolean().optional(),
 }).passthrough()
 
 const pagarClienteSchema = z.object({
@@ -24,6 +25,7 @@ const pagarClienteSchema = z.object({
   monto: z.coerce.number({ required_error: 'monto es requerido' }),
   usuario_id: z.coerce.number().optional().nullable(),
   observacion: z.string().optional().nullable(),
+  es_tarjeta: z.boolean().optional(),
 }).passthrough()
 
 module.exports = { creditoCreateSchema, creditoUpdateSchema, abonoCreateSchema, pagarClienteSchema }

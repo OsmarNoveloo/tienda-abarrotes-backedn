@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { getMetodoPagoTarjetaId } = require('../utils/metodosPago')
 
 function generateAbonoFolio() {
   const now = new Date()
@@ -11,7 +12,7 @@ function generateAbonoFolio() {
 // Registra el abono/liquidación también como venta (PAGADA, sin productos) para que
 // cuente en el total de ventas y el dashboard, ya que es dinero que sí entró a la cuenta.
 // Nunca debe romper la operación principal de abono si algo falla aquí.
-async function registrarVentaPorAbono({ usuario_id, monto, observacion }) {
+async function registrarVentaPorAbono({ usuario_id, monto, observacion, esTarjeta }) {
   try {
     const { data: cajaAbierta } = await supabase
       .from('caja_sesiones')
@@ -21,7 +22,7 @@ async function registrarVentaPorAbono({ usuario_id, monto, observacion }) {
       .limit(1)
       .maybeSingle()
 
-    await supabase.from('ventas').insert([{
+    const { data: venta, error: ventaErr } = await supabase.from('ventas').insert([{
       caja_sesion_id: cajaAbierta?.id ?? null,
       usuario_id,
       folio: generateAbonoFolio(),
@@ -32,7 +33,21 @@ async function registrarVentaPorAbono({ usuario_id, monto, observacion }) {
       estado: 'PAGADA',
       observacion,
       fecha_venta: getLocalISOString(),
-    }])
+    }]).select('id').single()
+
+    if (ventaErr) throw ventaErr
+
+    if (esTarjeta && venta) {
+      const metodoPagoId = await getMetodoPagoTarjetaId()
+      if (metodoPagoId) {
+        await supabase.from('venta_pagos').insert([{
+          venta_id: venta.id,
+          metodo_pago_id: metodoPagoId,
+          monto,
+          creado_en: getLocalISOString(),
+        }])
+      }
+    }
   } catch (err) {
     console.error('registrarVentaPorAbono:', err.message)
   }
@@ -252,7 +267,7 @@ async function getAbonos(req, res, next) {
 async function createAbono(req, res, next) {
   try {
     const { id } = req.params
-    const { monto, ...rest } = req.body
+    const { monto, es_tarjeta, ...rest } = req.body
     const montoNum = Number(monto)
 
     const { data: credito, error: creditoErr } = await supabase
@@ -266,9 +281,11 @@ async function createAbono(req, res, next) {
     const nuevoSaldo = Number(Math.max(Number(credito.saldo_pendiente) - montoNum, 0).toFixed(2))
     const nuevoEstado = nuevoSaldo <= 0 ? 'PAGADO' : 'ABONANDO'
 
+    const metodoPagoId = es_tarjeta ? await getMetodoPagoTarjetaId() : (rest.metodo_pago_id ?? null)
+
     const { data, error } = await supabase
       .from('abonos_credito')
-      .insert([{ ...rest, credito_id: Number(id), monto: montoNum, fecha_abono: getLocalISOString() }])
+      .insert([{ ...rest, credito_id: Number(id), monto: montoNum, fecha_abono: getLocalISOString(), metodo_pago_id: metodoPagoId }])
       .select()
       .single()
 
@@ -284,6 +301,7 @@ async function createAbono(req, res, next) {
       usuario_id: rest.usuario_id,
       monto: montoNum,
       observacion: `${nuevoEstado === 'PAGADO' ? 'Liquidación' : 'Abono'} de crédito — ${cliente?.nombre ?? 'Cliente'}${rest.observacion ? ` | ${rest.observacion}` : ''}`,
+      esTarjeta: Boolean(es_tarjeta),
     })
 
     res.status(201).json(data)
@@ -294,7 +312,7 @@ async function createAbono(req, res, next) {
 
 async function pagarCliente(req, res, next) {
   try {
-    const { cliente_id, monto, observacion, usuario_id } = req.body
+    const { cliente_id, monto, observacion, usuario_id, es_tarjeta } = req.body
     const montoFinal = Number(monto)
 
     const { data: creditsData, error: fetchErr } = await supabase
@@ -306,6 +324,8 @@ async function pagarCliente(req, res, next) {
       .order('fecha_credito', { ascending: true })
 
     if (fetchErr) return next(fetchErr)
+
+    const metodoPagoId = es_tarjeta ? await getMetodoPagoTarjetaId() : null
 
     let remaining = montoFinal
     const abonosToInsert = []
@@ -322,7 +342,7 @@ async function pagarCliente(req, res, next) {
         usuario_id,
         monto: abonoMonto,
         fecha_abono: getLocalISOString(),
-        metodo_pago_id: null,
+        metodo_pago_id: metodoPagoId,
         observacion: observacion ?? null,
       })
       creditosToUpdate.push({ id: credit.id, saldo: nuevoSaldo, estado: nuevoSaldo <= 0 ? 'PAGADO' : 'ABONANDO' })
@@ -346,6 +366,7 @@ async function pagarCliente(req, res, next) {
         usuario_id,
         monto: montoAplicado,
         observacion: `Pago de crédito — ${cliente?.nombre ?? 'Cliente'} (${abonosToInsert.length} crédito${abonosToInsert.length === 1 ? '' : 's'})${observacion ? ` | ${observacion}` : ''}`,
+        esTarjeta: Boolean(es_tarjeta),
       })
     }
 

@@ -1,6 +1,7 @@
 const crypto = require('crypto')
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { getMetodoPagoTarjetaId } = require('../utils/metodosPago')
 
 const MP_API = 'https://api.mercadopago.com'
 
@@ -63,10 +64,16 @@ async function aplicarPagoSiCorresponde(order) {
 
     if (pagoExistente) return
 
+    const metodoPagoId = await getMetodoPagoTarjetaId()
+    if (!metodoPagoId) {
+      console.error('aplicarPagoSiCorresponde: no se encontró metodo_pago_id para tarjeta, no se registra el pago')
+      return
+    }
+
     await Promise.all([
       supabase.from('venta_pagos').insert([{
         venta_id: Number(ventaId),
-        metodo: 'TARJETA',
+        metodo_pago_id: metodoPagoId,
         monto: Number(payment.paid_amount ?? payment.amount),
         referencia: String(payment.id),
         creado_en: getLocalISOString(),
