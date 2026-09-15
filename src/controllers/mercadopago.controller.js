@@ -57,6 +57,14 @@ async function aplicarPagoSiCorresponde(order) {
     // otros cobros con terminal (ej. abonos a crédito) se aplican desde su propio flujo.
     if (!ventaId || !/^\d+$/.test(String(ventaId))) return
 
+    // Lo crítico es marcar la venta como pagada — el dinero ya se cobró en la terminal.
+    // Esto NUNCA debe depender de que se pueda resolver o insertar el detalle del método de pago.
+    await supabase
+      .from('ventas')
+      .update({ estado: 'PAGADA' })
+      .eq('id', Number(ventaId))
+      .eq('estado', 'PENDIENTE')
+
     const { data: pagoExistente } = await supabase
       .from('venta_pagos')
       .select('id')
@@ -67,24 +75,17 @@ async function aplicarPagoSiCorresponde(order) {
 
     const metodoPagoId = await getMetodoPagoTarjetaId()
     if (!metodoPagoId) {
-      console.error('aplicarPagoSiCorresponde: no se encontró metodo_pago_id para tarjeta, no se registra el pago')
+      console.error('aplicarPagoSiCorresponde: no se encontró metodo_pago_id para tarjeta, no se registra el detalle del pago (la venta ya quedó PAGADA)')
       return
     }
 
-    await Promise.all([
-      supabase.from('venta_pagos').insert([{
-        venta_id: Number(ventaId),
-        metodo_pago_id: metodoPagoId,
-        monto: Number(payment.paid_amount ?? payment.amount),
-        referencia: String(payment.id),
-        creado_en: getLocalISOString(),
-      }]),
-      supabase
-        .from('ventas')
-        .update({ estado: 'PAGADA' })
-        .eq('id', Number(ventaId))
-        .eq('estado', 'PENDIENTE'),
-    ])
+    await supabase.from('venta_pagos').insert([{
+      venta_id: Number(ventaId),
+      metodo_pago_id: metodoPagoId,
+      monto: Number(payment.paid_amount ?? payment.amount),
+      referencia: String(payment.id),
+      creado_en: getLocalISOString(),
+    }])
   } catch (err) {
     console.error('aplicarPagoSiCorresponde:', err.message)
   }
