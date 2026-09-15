@@ -71,20 +71,34 @@ async function getAll(req, res, next) {
     const totalRows = count ?? 0
     let sumTotal = 0
     let totalPagadas = 0
+    const ventaIds = []
     const batchSize = 1000
     for (let start = 0; start < totalRows; start += batchSize) {
       const end = Math.min(start + batchSize, totalRows) - 1
       const { data: batch, error: batchErr } = await applyFilters(
-        supabase.from('ventas').select('total,estado'),
+        supabase.from('ventas').select('id,total,estado'),
       ).range(start, end)
       if (batchErr) return next(batchErr)
       for (const row of batch ?? []) {
         sumTotal += Number(row.total)
         if (row.estado === 'PAGADA') totalPagadas++
+        ventaIds.push(row.id)
       }
     }
 
-    res.json({ items, total: totalRows, sumTotal, totalPagadas })
+    let sumTarjeta = 0
+    for (let start = 0; start < ventaIds.length; start += batchSize) {
+      const idsBatch = ventaIds.slice(start, start + batchSize)
+      const { data: pagosBatch, error: pagosErr } = await supabase
+        .from('venta_pagos')
+        .select('monto')
+        .eq('metodo', 'TARJETA')
+        .in('venta_id', idsBatch)
+      if (pagosErr) return next(pagosErr)
+      for (const row of pagosBatch ?? []) sumTarjeta += Number(row.monto)
+    }
+
+    res.json({ items, total: totalRows, sumTotal, totalPagadas, sumTarjeta })
   } catch (err) {
     next(err)
   }
