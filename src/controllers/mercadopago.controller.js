@@ -175,6 +175,59 @@ async function consultarIntento(req, res, next) {
   }
 }
 
+// Para ventas que quedaron en PENDIENTE aunque el cobro sí se haya completado en la terminal
+// (ej. se cerró la app antes de que el polling detectara "processed"). Vuelve a consultar el
+// intento en Mercado Pago y aplica el pago si ya está procesado.
+async function reconciliarVenta(req, res, next) {
+  try {
+    const { ventaId } = req.params
+
+    const { data: venta, error: ventaErr } = await supabase
+      .from('ventas')
+      .select('id,estado')
+      .eq('id', ventaId)
+      .maybeSingle()
+
+    if (ventaErr) return next(dbError('consultar la venta', ventaErr))
+    if (!venta) return res.status(404).json({ error: 'Venta no encontrada' })
+
+    if (venta.estado !== 'PENDIENTE') {
+      return res.json({ ok: true, ventaEstado: venta.estado, mensaje: 'La venta ya no está pendiente' })
+    }
+
+    const { data: transaccion, error: tErr } = await supabase
+      .from('terminal_transacciones')
+      .select('intent_id')
+      .eq('venta_id', ventaId)
+      .order('creado_en', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (tErr) return next(dbError('consultar la transacción de terminal', tErr))
+    if (!transaccion) return res.status(404).json({ error: 'No se encontró un cobro con terminal para esta venta' })
+
+    const response = await fetch(`${MP_API}/v1/orders/${transaccion.intent_id}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+    const data = await response.json()
+
+    if (!response.ok) return res.status(response.status).json(data)
+
+    await sincronizarTransaccion(transaccion.intent_id, {
+      estado: data.status,
+      paymentId: data.transactions?.payments?.[0]?.id ?? null,
+      detalle: data,
+    })
+    await aplicarPagoSiCorresponde(data)
+
+    const { data: ventaActualizada } = await supabase.from('ventas').select('id,estado').eq('id', ventaId).maybeSingle()
+
+    res.json({ ok: true, estadoOrden: data.status, ventaEstado: ventaActualizada?.estado ?? venta.estado })
+  } catch (err) {
+    next(externalError('Mercado Pago', err))
+  }
+}
+
 async function cancelarIntento(req, res, next) {
   try {
     const { intentId } = req.params
@@ -258,4 +311,4 @@ async function webhook(req, res) {
   }
 }
 
-module.exports = { crearIntento, consultarIntento, cancelarIntento, getTransacciones, webhook }
+module.exports = { crearIntento, consultarIntento, cancelarIntento, reconciliarVenta, getTransacciones, webhook }
