@@ -108,4 +108,105 @@ async function getStockBajoCount(req, res, next) {
   }
 }
 
-module.exports = { getMovimientos, createMovimiento, getStockActual, getStockPage, getStockBajoCount }
+async function getStockPorCodigo(req, res, next) {
+  try {
+    const codigo = String(req.params.codigo ?? '').trim()
+    if (!codigo) return res.status(400).json({ error: 'Código requerido' })
+
+    const { data, error } = await supabase
+      .from('vista_stock_actual')
+      .select('*')
+      .eq('codigo_barras', codigo)
+      .limit(1)
+      .maybeSingle()
+
+    if (error) return next(dbError('buscar el producto por código', error))
+    if (!data) return res.status(404).json({ error: `No hay producto con el código ${codigo}` })
+    res.json(data)
+  } catch (err) {
+    next(err)
+  }
+}
+
+// Registra varios productos de una sola vez.
+// ENTRADA: suma la cantidad de cada producto (recepción de mercancía).
+// CONTEO: la cantidad es lo contado físicamente; se registra la diferencia contra el stock
+// del sistema como ENTRADA o SALIDA, porque vista_stock_actual no toma en cuenta los AJUSTE.
+async function registrarLote(req, res, next) {
+  try {
+    const { modo, items, observacion } = req.body
+    const usuarioId = req.user?.id ?? null
+    const fecha = getLocalISOString()
+
+    // Si un producto viene repetido se suman sus cantidades
+    const cantidades = new Map()
+    for (const { producto_id, cantidad } of items) {
+      cantidades.set(producto_id, (cantidades.get(producto_id) ?? 0) + cantidad)
+    }
+    const productoIds = [...cantidades.keys()]
+
+    const { data: stockData, error: stockErr } = await supabase
+      .from('vista_stock_actual')
+      .select('producto_id, stock_actual')
+      .in('producto_id', productoIds)
+
+    if (stockErr) return next(dbError('consultar el stock actual', stockErr))
+
+    const stockPorProducto = new Map((stockData ?? []).map((s) => [s.producto_id, Number(s.stock_actual)]))
+    const noEncontrados = productoIds.filter((id) => !stockPorProducto.has(id))
+    if (noEncontrados.length) {
+      return res.status(400).json({ error: `Productos no encontrados: ${noEncontrados.join(', ')}` })
+    }
+
+    const movimientos = []
+    let sinCambios = 0
+
+    for (const [producto_id, cantidad] of cantidades) {
+      const stockAnterior = stockPorProducto.get(producto_id)
+      let tipo = 'ENTRADA'
+      let mover = cantidad
+
+      if (modo === 'CONTEO') {
+        const diferencia = Number((cantidad - stockAnterior).toFixed(3))
+        if (diferencia === 0) {
+          sinCambios++
+          continue
+        }
+        tipo = diferencia > 0 ? 'ENTRADA' : 'SALIDA'
+        mover = Math.abs(diferencia)
+      }
+
+      movimientos.push({
+        producto_id,
+        usuario_id: usuarioId,
+        tipo,
+        cantidad: mover,
+        referencia_tipo: null,
+        referencia_id: null,
+        observacion: modo === 'CONTEO'
+          ? `Conteo físico: sistema ${stockAnterior}, contado ${cantidad}${observacion ? ` — ${observacion}` : ''}`
+          : (observacion || 'Recepción rápida por escaneo'),
+        fecha_movimiento: fecha,
+      })
+    }
+
+    if (movimientos.length) {
+      const { error } = await supabase.from('inventario_movimientos').insert(movimientos)
+      if (error) return next(dbError('registrar los movimientos de inventario', error))
+    }
+
+    res.status(201).json({ registrados: movimientos.length, sinCambios })
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = {
+  getMovimientos,
+  createMovimiento,
+  getStockActual,
+  getStockPage,
+  getStockBajoCount,
+  getStockPorCodigo,
+  registrarLote,
+}

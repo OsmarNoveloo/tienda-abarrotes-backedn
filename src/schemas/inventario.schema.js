@@ -11,4 +11,17 @@ const movimientoCreateSchema = z.object({
   observacion: z.string().optional().nullable(),
 }).passthrough()
 
-module.exports = { movimientoCreateSchema }
+const loteSchema = z.object({
+  modo: z.enum(['ENTRADA', 'CONTEO'], { error: 'modo debe ser ENTRADA o CONTEO' }),
+  observacion: z.string().trim().max(200).optional().nullable(),
+  items: z.array(z.object({
+    producto_id: z.coerce.number().int().positive(),
+    // En CONTEO se permite 0 (no hay piezas en el anaquel)
+    cantidad: z.coerce.number().min(0, 'cantidad no puede ser negativa'),
+  })).min(1, 'Agrega al menos un producto').max(500, 'Máximo 500 productos por lote'),
+}).refine(
+  (body) => body.modo === 'CONTEO' || body.items.every((i) => i.cantidad > 0),
+  { message: 'En ENTRADA la cantidad debe ser mayor a 0', path: ['items'] },
+)
+
+module.exports = { movimientoCreateSchema, loteSchema }
