@@ -2,7 +2,8 @@ const crypto = require('crypto')
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
 const { getMetodoPagoTarjetaId } = require('../utils/metodosPago')
-const { dbError, externalError } = require('../utils/httpErrors')
+const { HttpError, dbError, externalError } = require('../utils/httpErrors')
+const { abonarCredito, pagarDeudaCliente, crearVentaPorAbono, validarPagoCredito } = require('../utils/creditosAbonos')
 
 const MP_API = 'https://api.mercadopago.com'
 
@@ -44,18 +45,106 @@ async function sincronizarTransaccion(intentId, { estado, paymentId, detalle }) 
   }
 }
 
+// Referencia de cobros de crédito: abn-k{creditoId}-u{usuarioId}-{ts} (un crédito)
+// o abn-c{clienteId}-u{usuarioId}-{ts} (toda la deuda del cliente). Así el backend sabe a qué
+// aplicar el pago sin depender de que el frontend siga abierto cuando la terminal lo apruebe.
+const REF_ABONO = /^abn-([kc])(\d+)-u(\d+)-\d+$/
+
+function parseReferenciaAbono(ref) {
+  const match = REF_ABONO.exec(String(ref ?? ''))
+  if (!match) return null
+  return { tipo: match[1] === 'k' ? 'credito' : 'cliente', id: Number(match[2]), usuarioId: Number(match[3]) }
+}
+
+async function eliminarVenta(ventaId) {
+  await supabase.from('venta_pagos').delete().eq('venta_id', ventaId)
+  await supabase.from('ventas').delete().eq('id', ventaId)
+}
+
+// Aplica el abono de un cobro con terminal una sola vez por orden. El candado es
+// terminal_transacciones.venta_id: quien logra ligarle la venta del abono es quien aplica;
+// si el webhook y el polling llegan a la vez, el segundo deshace su venta y no duplica nada.
+async function aplicarAbonoTerminal(order, payment, { tipo, id, usuarioId }) {
+  let ventaId = null
+  let ventaLigada = false
+  try {
+    const { data: transaccion } = await supabase
+      .from('terminal_transacciones')
+      .select('venta_id')
+      .eq('intent_id', order.id)
+      .maybeSingle()
+
+    if (transaccion?.venta_id) return { ok: true, ya_aplicado: true }
+
+    const monto = Number(payment.paid_amount ?? payment.amount)
+    if (!transaccion) {
+      await registrarTransaccion({ intentId: order.id, monto, estado: order.status, detalle: order })
+    }
+
+    const metodoPagoId = await getMetodoPagoTarjetaId()
+    ventaId = await crearVentaPorAbono({
+      usuarioId,
+      monto,
+      observacion: 'Pago de crédito con terminal',
+      metodoPagoId,
+      referencia: String(payment.id),
+    })
+
+    const { data: candado, error: candadoErr } = await supabase
+      .from('terminal_transacciones')
+      .update({ venta_id: ventaId, actualizado_en: getLocalISOString() })
+      .eq('intent_id', order.id)
+      .is('venta_id', null)
+      .select('id')
+
+    if (candadoErr) throw candadoErr
+    if (!candado?.length) {
+      await eliminarVenta(ventaId)
+      return { ok: true, ya_aplicado: true }
+    }
+    ventaLigada = true
+
+    const params = { monto, usuarioId, observacion: `Cobro con terminal (pago ${payment.id})`, metodoPagoId }
+    const resultado = tipo === 'credito'
+      ? await abonarCredito({ creditoId: id, ...params })
+      : await pagarDeudaCliente({ clienteId: id, ...params })
+
+    const creditos = resultado.abonos ?? 1
+    await supabase
+      .from('ventas')
+      .update({ observacion: `Pago de crédito con terminal — ${resultado.clienteNombre} (${creditos} crédito${creditos === 1 ? '' : 's'})` })
+      .eq('id', ventaId)
+
+    return { ok: true }
+  } catch (err) {
+    console.error('aplicarAbonoTerminal:', err.message)
+    // Se libera el candado para poder reintentar; el cobro queda en terminal_transacciones
+    // como 'processed' sin venta ligada, así se puede rastrear.
+    if (ventaId) {
+      if (ventaLigada) {
+        await supabase.from('terminal_transacciones').update({ venta_id: null }).eq('intent_id', order.id).eq('venta_id', ventaId)
+      }
+      await eliminarVenta(ventaId)
+    }
+    return { ok: false, error: err.expose ? err.message : 'No se pudo registrar el abono del cobro con terminal' }
+  }
+}
+
 // Se llama tanto desde el webhook como desde consultarIntento (polling del frontend),
 // porque el webhook depende de que Mercado Pago pueda alcanzar la URL pública del servidor.
 // La referencia (payment.id) evita aplicar el pago dos veces si ambos caminos disparan casi a la vez.
+// Para cobros de crédito regresa { ok, error? } para que el frontend sepa si el abono quedó registrado.
 async function aplicarPagoSiCorresponde(order) {
-  try {
-    const payment = order.transactions?.payments?.[0]
-    if (order.status !== 'processed' || !payment?.id) return
+  const payment = order.transactions?.payments?.[0]
+  if (order.status !== 'processed' || !payment?.id) return null
 
+  const referenciaAbono = parseReferenciaAbono(order.external_reference)
+  if (referenciaAbono) return aplicarAbonoTerminal(order, payment, referenciaAbono)
+
+  try {
     const ventaId = order.external_reference
-    // Solo se auto-aplica cuando la referencia es un id de venta real (numérico);
-    // otros cobros con terminal (ej. abonos a crédito) se aplican desde su propio flujo.
-    if (!ventaId || !/^\d+$/.test(String(ventaId))) return
+    // Solo se auto-aplica cuando la referencia es un id de venta real (numérico)
+    if (!ventaId || !/^\d+$/.test(String(ventaId))) return null
 
     // Lo crítico es marcar la venta como pagada — el dinero ya se cobró en la terminal.
     // Esto NUNCA debe depender de que se pueda resolver o insertar el detalle del método de pago.
@@ -89,19 +178,33 @@ async function aplicarPagoSiCorresponde(order) {
   } catch (err) {
     console.error('aplicarPagoSiCorresponde:', err.message)
   }
+  return null
 }
 
 async function crearIntento(req, res, next) {
   try {
-    const { venta_id, monto, descripcion, referencia } = req.body
+    const { venta_id, monto, descripcion, referencia, abono } = req.body
 
     if (!monto) {
       return res.status(400).json({ error: 'monto es requerido' })
     }
 
-    const externalReference = venta_id
-      ? String(venta_id)
-      : (referencia ? String(referencia).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) : `pago-${Date.now()}`)
+    let externalReference
+    if (abono) {
+      const creditoId = abono.credito_id ? Number(abono.credito_id) : null
+      const clienteId = abono.cliente_id ? Number(abono.cliente_id) : null
+      if (!creditoId && !clienteId) throw new HttpError(400, 'abono requiere credito_id o cliente_id')
+      if (!req.user?.id) throw new HttpError(401, 'No hay sesión activa para registrar el abono')
+
+      await validarPagoCredito({ creditoId, clienteId, monto })
+      externalReference = creditoId
+        ? `abn-k${creditoId}-u${req.user.id}-${Date.now()}`
+        : `abn-c${clienteId}-u${req.user.id}-${Date.now()}`
+    } else {
+      externalReference = venta_id
+        ? String(venta_id)
+        : (referencia ? String(referencia).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) : `pago-${Date.now()}`)
+    }
 
     const body = {
       type: 'point',
@@ -145,7 +248,7 @@ async function crearIntento(req, res, next) {
 
     res.status(201).json(data)
   } catch (err) {
-    next(externalError('Mercado Pago', err))
+    next(err instanceof HttpError ? err : externalError('Mercado Pago', err))
   }
 }
 
@@ -163,14 +266,14 @@ async function consultarIntento(req, res, next) {
       return res.status(response.status).json(data)
     }
 
-    sincronizarTransaccion(intentId, {
+    await sincronizarTransaccion(intentId, {
       estado: data.status,
       paymentId: data.transactions?.payments?.[0]?.id ?? null,
       detalle: data,
     })
-    aplicarPagoSiCorresponde(data)
+    const aplicacion = await aplicarPagoSiCorresponde(data)
 
-    res.json(data)
+    res.json(aplicacion ? { ...data, aplicacion } : data)
   } catch (err) {
     next(externalError('Mercado Pago', err))
   }

@@ -1,54 +1,15 @@
 const supabase = require('../config/supabase')
 const { getLocalISOString } = require('../utils/dateUtils')
+const { abonarCredito, pagarDeudaCliente, crearVentaPorAbono } = require('../utils/creditosAbonos')
 const { getMetodoPagoTarjetaId } = require('../utils/metodosPago')
 const { dbError } = require('../utils/httpErrors')
 
-function generateAbonoFolio() {
-  const now = new Date()
-  const pad = (value) => String(value).padStart(2, '0')
-  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
-  return `ABN-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${rand}`
-}
-
-// Registra el abono/liquidación también como venta (PAGADA, sin productos) para que
-// cuente en el total de ventas y el dashboard, ya que es dinero que sí entró a la cuenta.
-// Nunca debe romper la operación principal de abono si algo falla aquí.
-async function registrarVentaPorAbono({ usuario_id, monto, observacion, esTarjeta }) {
+// Se registra como venta para que el abono cuente en ventas y dashboard. Nunca debe romper
+// la respuesta del abono, porque el abono ya quedó guardado.
+async function registrarVentaPorAbono({ usuarioId, monto, observacion, esTarjeta }) {
   try {
-    const { data: cajaAbierta } = await supabase
-      .from('caja_sesiones')
-      .select('id')
-      .eq('estado', 'ABIERTA')
-      .order('fecha_apertura', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    const { data: venta, error: ventaErr } = await supabase.from('ventas').insert([{
-      caja_sesion_id: cajaAbierta?.id ?? null,
-      usuario_id,
-      folio: generateAbonoFolio(),
-      subtotal: monto,
-      descuento: 0,
-      impuesto: 0,
-      total: monto,
-      estado: 'PAGADA',
-      observacion,
-      fecha_venta: getLocalISOString(),
-    }]).select('id').single()
-
-    if (ventaErr) throw ventaErr
-
-    if (esTarjeta && venta) {
-      const metodoPagoId = await getMetodoPagoTarjetaId()
-      if (metodoPagoId) {
-        await supabase.from('venta_pagos').insert([{
-          venta_id: venta.id,
-          metodo_pago_id: metodoPagoId,
-          monto,
-          creado_en: getLocalISOString(),
-        }])
-      }
-    }
+    const metodoPagoId = esTarjeta ? await getMetodoPagoTarjetaId() : null
+    await crearVentaPorAbono({ usuarioId, monto, observacion, metodoPagoId })
   } catch (err) {
     console.error('registrarVentaPorAbono:', err.message)
   }
@@ -268,44 +229,25 @@ async function getAbonos(req, res, next) {
 async function createAbono(req, res, next) {
   try {
     const { id } = req.params
-    const { monto, es_tarjeta, ...rest } = req.body
-    const montoNum = Number(monto)
+    const { monto, es_tarjeta, usuario_id, observacion, metodo_pago_id } = req.body
+    const metodoPagoId = es_tarjeta ? await getMetodoPagoTarjetaId() : (metodo_pago_id ?? null)
 
-    const { data: credito, error: creditoErr } = await supabase
-      .from('creditos_ventas')
-      .select('saldo_pendiente, cliente_id')
-      .eq('id', id)
-      .single()
+    const { abono, montoAplicado, nuevoEstado, clienteNombre } = await abonarCredito({
+      creditoId: Number(id),
+      monto,
+      usuarioId: usuario_id,
+      observacion,
+      metodoPagoId,
+    })
 
-    if (creditoErr) return next(dbError('consultar el crédito', creditoErr))
-
-    const nuevoSaldo = Number(Math.max(Number(credito.saldo_pendiente) - montoNum, 0).toFixed(2))
-    const nuevoEstado = nuevoSaldo <= 0 ? 'PAGADO' : 'ABONANDO'
-
-    const metodoPagoId = es_tarjeta ? await getMetodoPagoTarjetaId() : (rest.metodo_pago_id ?? null)
-
-    const { data, error } = await supabase
-      .from('abonos_credito')
-      .insert([{ ...rest, credito_id: Number(id), monto: montoNum, fecha_abono: getLocalISOString(), metodo_pago_id: metodoPagoId }])
-      .select()
-      .single()
-
-    if (error) return next(dbError('registrar el abono', error))
-
-    await supabase
-      .from('creditos_ventas')
-      .update({ saldo_pendiente: nuevoSaldo, estado: nuevoEstado })
-      .eq('id', id)
-
-    const { data: cliente } = await supabase.from('clientes').select('nombre').eq('id', credito.cliente_id).maybeSingle()
-    void registrarVentaPorAbono({
-      usuario_id: rest.usuario_id,
-      monto: montoNum,
-      observacion: `${nuevoEstado === 'PAGADO' ? 'Liquidación' : 'Abono'} de crédito — ${cliente?.nombre ?? 'Cliente'}${rest.observacion ? ` | ${rest.observacion}` : ''}`,
+    await registrarVentaPorAbono({
+      usuarioId: usuario_id,
+      monto: montoAplicado,
+      observacion: `${nuevoEstado === 'PAGADO' ? 'Liquidación' : 'Abono'} de crédito — ${clienteNombre}${observacion ? ` | ${observacion}` : ''}`,
       esTarjeta: Boolean(es_tarjeta),
     })
 
-    res.status(201).json(data)
+    res.status(201).json(abono)
   } catch (err) {
     next(err)
   }
@@ -314,64 +256,24 @@ async function createAbono(req, res, next) {
 async function pagarCliente(req, res, next) {
   try {
     const { cliente_id, monto, observacion, usuario_id, es_tarjeta } = req.body
-    const montoFinal = Number(monto)
-
-    const { data: creditsData, error: fetchErr } = await supabase
-      .from('creditos_ventas')
-      .select('id,saldo_pendiente')
-      .eq('cliente_id', cliente_id)
-      .not('estado', 'in', '("PAGADO","CANCELADO")')
-      .gt('saldo_pendiente', 0)
-      .order('fecha_credito', { ascending: true })
-
-    if (fetchErr) return next(dbError('consultar créditos del cliente', fetchErr))
-
     const metodoPagoId = es_tarjeta ? await getMetodoPagoTarjetaId() : null
 
-    let remaining = montoFinal
-    const abonosToInsert = []
-    const creditosToUpdate = []
+    const { abonos, montoAplicado, clienteNombre } = await pagarDeudaCliente({
+      clienteId: Number(cliente_id),
+      monto,
+      usuarioId: usuario_id,
+      observacion,
+      metodoPagoId,
+    })
 
-    for (const credit of creditsData ?? []) {
-      if (remaining <= 0.001) break
-      const saldo = Number(credit.saldo_pendiente)
-      const abonoMonto = Number(Math.min(remaining, saldo).toFixed(2))
-      const nuevoSaldo = Number(Math.max(saldo - abonoMonto, 0).toFixed(2))
+    await registrarVentaPorAbono({
+      usuarioId: usuario_id,
+      monto: montoAplicado,
+      observacion: `Pago de crédito — ${clienteNombre} (${abonos} crédito${abonos === 1 ? '' : 's'})${observacion ? ` | ${observacion}` : ''}`,
+      esTarjeta: Boolean(es_tarjeta),
+    })
 
-      abonosToInsert.push({
-        credito_id: credit.id,
-        usuario_id,
-        monto: abonoMonto,
-        fecha_abono: getLocalISOString(),
-        metodo_pago_id: metodoPagoId,
-        observacion: observacion ?? null,
-      })
-      creditosToUpdate.push({ id: credit.id, saldo: nuevoSaldo, estado: nuevoSaldo <= 0 ? 'PAGADO' : 'ABONANDO' })
-      remaining -= abonoMonto
-    }
-
-    const { error: abonoErr } = await supabase.from('abonos_credito').insert(abonosToInsert)
-    if (abonoErr) return next(dbError('registrar los abonos', abonoErr))
-
-    for (const upd of creditosToUpdate) {
-      await supabase
-        .from('creditos_ventas')
-        .update({ saldo_pendiente: upd.saldo, estado: upd.estado })
-        .eq('id', upd.id)
-    }
-
-    const montoAplicado = Number((montoFinal - remaining).toFixed(2))
-    if (montoAplicado > 0) {
-      const { data: cliente } = await supabase.from('clientes').select('nombre').eq('id', cliente_id).maybeSingle()
-      void registrarVentaPorAbono({
-        usuario_id,
-        monto: montoAplicado,
-        observacion: `Pago de crédito — ${cliente?.nombre ?? 'Cliente'} (${abonosToInsert.length} crédito${abonosToInsert.length === 1 ? '' : 's'})${observacion ? ` | ${observacion}` : ''}`,
-        esTarjeta: Boolean(es_tarjeta),
-      })
-    }
-
-    res.json({ ok: true, abonos: abonosToInsert.length })
+    res.json({ ok: true, abonos, monto_aplicado: montoAplicado })
   } catch (err) {
     next(err)
   }
