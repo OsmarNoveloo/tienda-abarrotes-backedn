@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken')
 const supabase = require('../config/supabase')
-const { sha256Hex } = require('../utils/security')
+const { hashPassword, verifyPassword, esHashLegacy } = require('../utils/security')
+const { esAdmin } = require('../middleware/requireAdmin')
 const { dbError } = require('../utils/httpErrors')
 
 async function login(req, res, next) {
@@ -20,9 +21,16 @@ async function login(req, res, next) {
     if (error) return next(dbError('consultar el usuario', error))
     if (!data) return res.status(401).json({ error: 'Usuario o contraseña incorrectos' })
 
-    const hash = sha256Hex(password)
-    if (hash !== data.password_hash) {
+    const valida = await verifyPassword(password, data.password_hash)
+    if (!valida) {
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' })
+    }
+
+    // Migra el hash SHA-256 viejo a bcrypt; si falla no impide el login
+    if (esHashLegacy(data.password_hash)) {
+      const nuevoHash = await hashPassword(password)
+      const { error: migErr } = await supabase.from('usuarios').update({ password_hash: nuevoHash }).eq('id', data.id)
+      if (migErr) console.error('migrar password_hash:', migErr.message)
     }
 
     const rolesPayload = data.roles
@@ -64,7 +72,7 @@ async function recovery(req, res, next) {
 
     const { data, error } = await supabase
       .from('usuarios')
-      .select('id')
+      .select('id,roles(nombre)')
       .eq('usuario', usuario.trim())
       .eq('email', email.trim())
       .eq('estado', 'ACTIVO')
@@ -73,7 +81,14 @@ async function recovery(req, res, next) {
     if (error) return next(dbError('consultar el usuario', error))
     if (!data) return res.status(404).json({ error: 'No se encontró un usuario activo con esos datos' })
 
-    const password_hash = sha256Hex(newPassword)
+    // Esta recuperación solo pide usuario y email (no envía código), así que no se permite
+    // para administradores: con esos dos datos alguien podría tomar el control del sistema.
+    const rol = Array.isArray(data.roles) ? data.roles[0] : data.roles
+    if (esAdmin({ rol_nombre: rol?.nombre })) {
+      return res.status(403).json({ error: 'La contraseña de un administrador solo se puede cambiar desde Usuarios por otro administrador' })
+    }
+
+    const password_hash = await hashPassword(newPassword)
     const { error: updateErr } = await supabase.from('usuarios').update({ password_hash }).eq('id', data.id)
     if (updateErr) return next(dbError('actualizar la contraseña', updateErr))
 

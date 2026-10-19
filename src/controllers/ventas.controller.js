@@ -5,7 +5,8 @@ const { getTicketData } = require('../utils/ticket')
 const { buildTicketLines, DEFAULT_WIDTH } = require('../utils/ticketBuilder')
 const { renderEscPos } = require('../utils/ticketEscpos')
 const { renderTicketPdf } = require('../utils/ticketPdf')
-const { dbError } = require('../utils/httpErrors')
+const { HttpError, dbError, notFound } = require('../utils/httpErrors')
+const { verificarCobroAntesDeCancelar } = require('./mercadopago.controller')
 
 async function getAll(req, res, next) {
   try {
@@ -81,9 +82,12 @@ async function getAll(req, res, next) {
         supabase.from('ventas').select('id,total,estado'),
       ).range(start, end)
       if (batchErr) return next(dbError('calcular los totales de ventas', batchErr))
+      // Solo cuenta lo cobrado: las ventas a crédito se guardan como CANCELADA y su dinero
+      // entra después como venta ABN- al abonar; las pendientes aún no se cobran.
       for (const row of batch ?? []) {
+        if (row.estado !== 'PAGADA') continue
         sumTotal += Number(row.total)
-        if (row.estado === 'PAGADA') totalPagadas++
+        totalPagadas++
         ventaIds.push(row.id)
       }
     }
@@ -143,9 +147,39 @@ async function getById(req, res, next) {
   }
 }
 
+// Borra todo lo que se alcanzó a guardar de una venta incompleta
+async function deshacerVenta(ventaId) {
+  await Promise.all([
+    supabase.from('venta_detalle').delete().eq('venta_id', ventaId),
+    supabase.from('venta_pagos').delete().eq('venta_id', ventaId),
+    supabase.from('creditos_ventas').delete().eq('venta_id', ventaId),
+    supabase.from('inventario_movimientos').delete().eq('referencia_tipo', 'VENTA').eq('referencia_id', ventaId),
+  ])
+  await supabase.from('ventas').delete().eq('id', ventaId)
+}
+
 async function create(req, res, next) {
   try {
     const { detalle, pagos, movimientos, credito, ...ventaData } = req.body
+
+    // El POS reenvía las ventas de la cola offline; si la primera vez sí se guardó (solo se
+    // perdió la respuesta) se regresa la misma venta en vez de duplicarla con su inventario.
+    if (ventaData.folio) {
+      const { data: existentes, error: folioErr } = await supabase
+        .from('ventas')
+        .select('*')
+        .eq('folio', ventaData.folio)
+        .limit(1)
+
+      if (folioErr) return next(dbError('verificar el folio de la venta', folioErr))
+      const existente = existentes?.[0]
+      if (existente) {
+        const mismaVenta = Number(existente.total) === Number(ventaData.total)
+          && Number(existente.usuario_id) === Number(ventaData.usuario_id)
+        if (mismaVenta) return res.status(200).json(existente)
+        return next(new HttpError(409, `Ya existe otra venta con el folio ${ventaData.folio}`))
+      }
+    }
 
     const { data: venta, error: vErr } = await supabase
       .from('ventas')
@@ -155,24 +189,29 @@ async function create(req, res, next) {
 
     if (vErr) return next(dbError('registrar la venta', vErr))
 
-    await Promise.all([
+    // Si falla cualquier parte (sobre todo el crédito o el inventario) se deshace la venta
+    // completa: es mejor que el POS reintente a que quede una deuda o un stock sin registrar.
+    const resultados = await Promise.all([
       detalle?.length
         ? supabase.from('venta_detalle').insert(detalle.map((d) => ({ ...d, venta_id: venta.id })))
-            .then(({ error }) => { if (error) console.error('venta_detalle:', error.message) })
-        : Promise.resolve(),
+        : null,
       pagos?.length
         ? supabase.from('venta_pagos').insert(pagos.map((p) => ({ ...p, venta_id: venta.id, creado_en: getLocalISOString() })))
-            .then(({ error }) => { if (error) console.error('venta_pagos:', error.message) })
-        : Promise.resolve(),
+        : null,
       movimientos?.length
         ? supabase.from('inventario_movimientos').insert(movimientos.map((m) => ({ ...m, referencia_id: venta.id })))
-            .then(({ error }) => { if (error) console.warn('inventario_movimientos:', error.message) })
-        : Promise.resolve(),
+        : null,
       credito
         ? supabase.from('creditos_ventas').insert([{ ...credito, venta_id: venta.id }])
-            .then(({ error }) => { if (error) console.warn('creditos_ventas:', error.message) })
-        : Promise.resolve(),
+        : null,
     ])
+
+    const partes = ['el detalle', 'los pagos', 'el inventario', 'el crédito']
+    const fallo = resultados.findIndex((r) => r?.error)
+    if (fallo !== -1) {
+      await deshacerVenta(venta.id)
+      return next(dbError(`guardar ${partes[fallo]} de la venta`, resultados[fallo].error))
+    }
 
     res.status(201).json(venta)
   } catch (err) {
@@ -180,18 +219,74 @@ async function create(req, res, next) {
   }
 }
 
+// Regresa al inventario lo que salió por la venta. Se marca con referencia_tipo
+// CANCELACION_VENTA para no regresarlo dos veces si se llama de nuevo.
+async function revertirInventarioVenta(ventaId, usuarioId) {
+  const { data: yaRevertido } = await supabase
+    .from('inventario_movimientos')
+    .select('id')
+    .eq('referencia_tipo', 'CANCELACION_VENTA')
+    .eq('referencia_id', ventaId)
+    .limit(1)
+
+  if (yaRevertido?.length) return
+
+  const { data: salidas, error } = await supabase
+    .from('inventario_movimientos')
+    .select('producto_id,cantidad,costo_unitario,usuario_id')
+    .eq('referencia_tipo', 'VENTA')
+    .eq('referencia_id', ventaId)
+    .eq('tipo', 'SALIDA')
+
+  if (error) throw dbError('consultar el inventario de la venta', error)
+  if (!salidas?.length) return
+
+  const fecha = getLocalISOString()
+  const { error: insertErr } = await supabase.from('inventario_movimientos').insert(salidas.map((m) => ({
+    producto_id: m.producto_id,
+    usuario_id: usuarioId ?? m.usuario_id,
+    tipo: 'ENTRADA',
+    cantidad: m.cantidad,
+    costo_unitario: m.costo_unitario,
+    referencia_tipo: 'CANCELACION_VENTA',
+    referencia_id: ventaId,
+    observacion: `Regreso por cancelación de venta ${ventaId}`,
+    fecha_movimiento: fecha,
+  })))
+
+  if (insertErr) throw dbError('regresar el inventario de la venta', insertErr)
+}
+
 async function cancelar(req, res, next) {
   try {
-    const { id } = req.params
-    const { data, error } = await supabase
+    const id = Number(req.params.id)
+
+    const { data: venta, error: ventaErr } = await supabase
+      .from('ventas')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    if (ventaErr) return next(dbError('consultar la venta', ventaErr))
+    if (!venta) return next(notFound('Venta'))
+    if (venta.estado === 'CANCELADA') return res.json(venta)
+
+    const bloqueo = await verificarCobroAntesDeCancelar(id)
+    if (bloqueo) return next(new HttpError(409, bloqueo))
+
+    // Solo cancela si nadie la cambió mientras tanto (ej. el webhook la marcó PAGADA)
+    const { data: actualizada, error } = await supabase
       .from('ventas')
       .update({ estado: 'CANCELADA' })
       .eq('id', id)
+      .eq('estado', venta.estado)
       .select()
-      .single()
 
     if (error) return next(dbError('cancelar la venta', error))
-    res.json(data)
+    if (!actualizada?.length) return next(new HttpError(409, 'La venta cambió de estado mientras se cancelaba. Actualiza e intenta de nuevo.'))
+
+    await revertirInventarioVenta(id, req.user?.id)
+    res.json(actualizada[0])
   } catch (err) {
     next(err)
   }

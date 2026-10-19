@@ -1,5 +1,5 @@
 const supabase = require('../config/supabase')
-const { sha256Hex } = require('../utils/security')
+const { hashPassword } = require('../utils/security')
 const { getLocalISOString } = require('../utils/dateUtils')
 const { registrarActividad } = require('../utils/actividad')
 const { dbError } = require('../utils/httpErrors')
@@ -21,7 +21,7 @@ async function getAll(req, res, next) {
 async function create(req, res, next) {
   try {
     const { password, ...rest } = req.body
-    const password_hash = sha256Hex(password)
+    const password_hash = await hashPassword(password)
 
     const { data, error } = await supabase
       .from('usuarios')
@@ -50,7 +50,7 @@ async function update(req, res, next) {
     const { password, ...rest } = req.body
 
     const payload = { ...rest }
-    if (password) payload.password_hash = sha256Hex(password)
+    if (password) payload.password_hash = await hashPassword(password)
 
     const { data, error } = await supabase
       .from('usuarios')

@@ -7,8 +7,8 @@ const abrirCajaSchema = z.object({
 
 const cerrarCajaSchema = z.object({
   empleado_cierre_id: z.coerce.number({ required_error: 'empleado_cierre_id es requerido' }),
-  total_efectivo: z.coerce.number({ required_error: 'total_efectivo es requerido' }),
-  total_tarjeta: z.coerce.number({ required_error: 'total_tarjeta es requerido' }),
+  // Los totales de ventas los calcula el backend; el cajero solo captura lo que contó
+  efectivo_contado: z.coerce.number().nonnegative('efectivo_contado no puede ser negativo').optional().nullable(),
   observaciones: z.string().optional().nullable(),
 }).passthrough()
 

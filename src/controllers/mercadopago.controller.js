@@ -355,6 +355,61 @@ async function cancelarIntento(req, res, next) {
   }
 }
 
+const ESTADOS_ORDEN_ACTIVA = ['created', 'at_terminal']
+
+// Antes de cancelar una venta cobrada con terminal hay que asegurarse de que el cliente no
+// pague después: si la orden sigue activa se intenta cancelar en Mercado Pago, y si ya se
+// aprobó se aplica el pago. Regresa un mensaje cuando NO se debe cancelar la venta.
+async function verificarCobroAntesDeCancelar(ventaId) {
+  const { data: transaccion, error } = await supabase
+    .from('terminal_transacciones')
+    .select('intent_id')
+    .eq('venta_id', ventaId)
+    .order('creado_en', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) throw dbError('consultar el cobro con terminal de la venta', error)
+  if (!transaccion) return null
+
+  let order
+  try {
+    const response = await fetch(`${MP_API}/v1/orders/${transaccion.intent_id}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+    if (!response.ok) return 'No se pudo verificar el cobro en Mercado Pago. Intenta de nuevo en unos segundos.'
+    order = await response.json()
+  } catch (err) {
+    throw externalError('Mercado Pago', err)
+  }
+
+  await sincronizarTransaccion(transaccion.intent_id, {
+    estado: order.status,
+    paymentId: order.transactions?.payments?.[0]?.id ?? null,
+    detalle: order,
+  })
+
+  if (order.status === 'processed') {
+    await aplicarPagoSiCorresponde(order)
+    return 'El cobro con tarjeta ya fue aprobado, la venta quedó pagada y no se puede cancelar.'
+  }
+
+  if (ESTADOS_ORDEN_ACTIVA.includes(order.status)) {
+    const cancelResponse = await fetch(`${MP_API}/v1/orders/${transaccion.intent_id}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    }).catch(() => null)
+
+    if (!cancelResponse?.ok) {
+      return 'El cobro sigue activo en la terminal. Cancélalo desde la terminal y vuelve a intentar.'
+    }
+    const data = await cancelResponse.json().catch(() => null)
+    await sincronizarTransaccion(transaccion.intent_id, { estado: data?.status ?? 'canceled', detalle: data })
+  }
+
+  return null
+}
+
 async function getTransacciones(req, res, next) {
   try {
     const page = Math.max(1, parseInt(req.query.page ?? '1'))
@@ -415,4 +470,12 @@ async function webhook(req, res) {
   }
 }
 
-module.exports = { crearIntento, consultarIntento, cancelarIntento, reconciliarVenta, getTransacciones, webhook }
+module.exports = {
+  crearIntento,
+  consultarIntento,
+  cancelarIntento,
+  reconciliarVenta,
+  getTransacciones,
+  webhook,
+  verificarCobroAntesDeCancelar,
+}

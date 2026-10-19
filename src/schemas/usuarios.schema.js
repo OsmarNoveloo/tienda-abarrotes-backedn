@@ -7,8 +7,8 @@ const usuarioCreateSchema = z.object({
   rol_id: z.coerce.number({ required_error: 'rol_id es requerido' }),
   telefono: z.string().optional().nullable(),
   email: z.string().email('email inválido').optional().nullable().or(z.literal('')),
-  estado: z.string().optional(),
-}).passthrough()
+  estado: z.enum(['ACTIVO', 'INACTIVO']).optional(),
+})
 
 const usuarioUpdateSchema = usuarioCreateSchema
   .partial()

@@ -10,7 +10,9 @@ const errorHandler = require('./src/middleware/errorHandler')
 const app = express()
 const PORT = process.env.PORT ?? 3000
 
-app.set('trust proxy', true)
+// Solo se confía en el primer proxy (Railway). Con `true` cualquiera podría falsear su IP
+// con X-Forwarded-For y saltarse el límite de intentos de login.
+app.set('trust proxy', 1)
 
 app.use(helmet())
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'))
