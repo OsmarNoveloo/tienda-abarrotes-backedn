@@ -158,28 +158,34 @@ async function deshacerVenta(ventaId) {
   await supabase.from('ventas').delete().eq('id', ventaId)
 }
 
+// El POS reenvía las ventas de la cola offline; si la primera vez sí se guardó (solo se
+// perdió la respuesta) se regresa la misma venta en vez de duplicarla con su inventario.
+async function responderSiFolioExiste(ventaData, res, next) {
+  const { data: existentes, error: folioErr } = await supabase
+    .from('ventas')
+    .select('*')
+    .eq('folio', ventaData.folio)
+    .limit(1)
+
+  if (folioErr) {
+    next(dbError('verificar el folio de la venta', folioErr))
+    return true
+  }
+  const existente = existentes?.[0]
+  if (!existente) return false
+
+  const mismaVenta = Number(existente.total) === Number(ventaData.total)
+    && Number(existente.usuario_id) === Number(ventaData.usuario_id)
+  if (mismaVenta) res.status(200).json(existente)
+  else next(new HttpError(409, `Ya existe otra venta con el folio ${ventaData.folio}`))
+  return true
+}
+
 async function create(req, res, next) {
   try {
     const { detalle, pagos, movimientos, credito, ...ventaData } = req.body
 
-    // El POS reenvía las ventas de la cola offline; si la primera vez sí se guardó (solo se
-    // perdió la respuesta) se regresa la misma venta en vez de duplicarla con su inventario.
-    if (ventaData.folio) {
-      const { data: existentes, error: folioErr } = await supabase
-        .from('ventas')
-        .select('*')
-        .eq('folio', ventaData.folio)
-        .limit(1)
-
-      if (folioErr) return next(dbError('verificar el folio de la venta', folioErr))
-      const existente = existentes?.[0]
-      if (existente) {
-        const mismaVenta = Number(existente.total) === Number(ventaData.total)
-          && Number(existente.usuario_id) === Number(ventaData.usuario_id)
-        if (mismaVenta) return res.status(200).json(existente)
-        return next(new HttpError(409, `Ya existe otra venta con el folio ${ventaData.folio}`))
-      }
-    }
+    if (ventaData.folio && await responderSiFolioExiste(ventaData, res, next)) return
 
     const { data: venta, error: vErr } = await supabase
       .from('ventas')
@@ -187,6 +193,9 @@ async function create(req, res, next) {
       .select()
       .single()
 
+    // 23505 = folio repetido (índice único idx_ventas_folio_unico): otro envío de la misma venta
+    // llegó al mismo tiempo y ganó; se responde con esa venta en lugar de duplicarla
+    if (vErr?.code === '23505' && ventaData.folio && await responderSiFolioExiste(ventaData, res, next)) return
     if (vErr) return next(dbError('registrar la venta', vErr))
 
     // Si falla cualquier parte (sobre todo el crédito o el inventario) se deshace la venta
